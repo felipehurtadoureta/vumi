@@ -1,0 +1,23 @@
+# Dependencies & build
+node_modules/
+dist/
+
+# Secrets
+.env
+.env.local
+*.env
+
+# Vite temp files
+vite.config.ts.timestamp-*.mjs
+
+# Documentos médicos/personales sensibles (solo en backup local, no en git)
+*.pdf
+*.PDF
+*.jpg
+*.JPG
+*.jpeg
+*.JPEG
+*.png
+*.PNG
+*.heic
+*.HEIC
