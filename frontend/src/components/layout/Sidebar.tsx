@@ -1,6 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import {
-  LayoutDashboard, FolderOpen, BarChart2, Users, LogOut, Trash2, Library,
+  LayoutDashboard, FolderOpen, BarChart2, Users, LogOut, Trash2, Library, Layers,
 } from 'lucide-react'
 import { signOut } from '@/lib/supabase'
 import clsx from 'clsx'
@@ -11,6 +11,7 @@ const nav = [
   { to: '/documents',  icon: Library,         label: 'Documentos' },
   { to: '/resumen',    icon: BarChart2,       label: 'Resumen'    },
   { to: '/patients',   icon: Users,           label: 'Pacientes'  },
+  { to: '/unir-pdf',   icon: Layers,          label: 'Unir PDF'   },
 ]
 
 export default function Sidebar() {
