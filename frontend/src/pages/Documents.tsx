@@ -242,7 +242,9 @@ export default function Documents() {
                           <p className="text-xs text-gray-400">{formatSize(d.file_size)}</p>
                         </div>
                         {d.needs_review && (
-                          <AlertTriangle size={14} className="text-yellow-500 shrink-0" title="Requiere revisión manual" />
+                          <span title="Requiere revisión manual">
+                            <AlertTriangle size={14} className="text-yellow-500 shrink-0" />
+                          </span>
                         )}
                       </div>
                     </td>

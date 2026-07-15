@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Trash2, Loader2, Upload, FileText,
   CheckCircle, Clock, XCircle, Send, Calendar, Download, UserCheck, Users, Eye, X, Files, Check, Archive, RotateCcw,
-  AlertCircle, Plus, BookOpen, Search,
+  AlertCircle, Plus, BookOpen, Search, ChevronUp, ChevronDown,
 } from 'lucide-react'
 import { mergeFilesToPdf } from '@/lib/mergeFiles'
 import { uploadToDrive, deleteFromDrive, getAccessToken, isDriveAvailable } from '@/lib/googleDrive'
@@ -278,9 +278,12 @@ export default function CaseDetail() {
       if (isDriveAvailable()) {
         const driveFile = new File([file], displayName, { type: mimeType })
         uploadToDrive(driveFile)
-          .then(driveLink => {
+          .then(async driveLink => {
             console.log('[Drive] subido OK:', driveLink)
-            return supabase.from('documents').update({ drive_link: driveLink }).eq('id', doc.id)
+            await supabase.from('documents').update({ drive_link: driveLink }).eq('id', doc.id)
+            // Refrescar estado local para que el link de Drive quede disponible
+            // de inmediato (ej. al generar el correo de envío justo después de subir).
+            await loadCase()
           })
           .catch(e => console.error('[Drive] upload falló:', e.message))
       }
@@ -482,13 +485,52 @@ export default function CaseDetail() {
 
       // Generar links para cada documento: Drive si existe, sino Supabase (7 días)
       const allDocs = Object.values(docsByType).filter(Boolean) as CaseDocument[]
+
+      // Traer drive_link fresco desde la BD: el estado local puede estar
+      // desactualizado si la subida a Drive terminó después de la última carga.
+      const docIds = allDocs.map(cd => (cd.document as any)?.id).filter(Boolean)
+      const freshDriveLinks = new Map<string, string | null>()
+      if (docIds.length > 0) {
+        const { data: freshDocs } = await supabase
+          .from('documents')
+          .select('id, drive_link')
+          .in('id', docIds)
+        for (const d of freshDocs ?? []) freshDriveLinks.set(d.id, d.drive_link)
+      }
+
       const linkLines: string[] = []
       for (const cd of allDocs) {
         const doc = cd.document as any
         if (!doc?.storage_path) continue
         const label = DOC_FILE_LABEL[cd.role] ?? cd.role
-        if (doc.drive_link) {
-          linkLines.push(`${label}\n${doc.drive_link}`)
+        let driveLink: string | null = freshDriveLinks.get(doc.id) ?? doc.drive_link ?? null
+
+        // Reparación automática: si a este documento nunca se le guardó el
+        // link de Drive (subida vieja fallida, condición de carrera, etc.),
+        // reintentar la subida ahora mismo, antes de recurrir a Supabase.
+        if (!driveLink && isDriveAvailable()) {
+          try {
+            const { data: blob } = await supabase.storage
+              .from('documents')
+              .download(doc.storage_path)
+            if (blob) {
+              const ext = doc.storage_path.split('.').pop() ?? 'bin'
+              const driveFile = new File(
+                [blob],
+                doc.original_name ?? `documento.${ext}`,
+                { type: doc.mime_type ?? blob.type }
+              )
+              driveLink = await uploadToDrive(driveFile)
+              await supabase.from('documents').update({ drive_link: driveLink }).eq('id', doc.id)
+              console.log('[Drive] link reparado para', doc.id, driveLink)
+            }
+          } catch (e: any) {
+            console.warn('[Drive] reintento de subida falló para', doc.id, e.message)
+          }
+        }
+
+        if (driveLink) {
+          linkLines.push(`${label}\n${driveLink}`)
         } else {
           const { data: signed } = await supabase.storage
             .from('documents')
@@ -1549,6 +1591,18 @@ function DocZone({ slot, existing, uploading, multi, onFile, onDownload, onDelet
       setMerging(false)
     }
   }
+  function moveMultiFile(index: number, direction: -1 | 1) {
+    setMultiFiles(prev => {
+      const target = index + direction
+      if (target < 0 || target >= prev.length) return prev
+      const next = [...prev]
+      ;[next[index], next[target]] = [next[target], next[index]]
+      return next
+    })
+  }
+  function removeMultiFile(index: number) {
+    setMultiFiles(prev => prev.filter((_, i) => i !== index))
+  }
 
   function handleDragOver(e: React.DragEvent) { e.preventDefault(); setDragging(true) }
   function handleDragLeave(e: React.DragEvent) {
@@ -1593,7 +1647,7 @@ function DocZone({ slot, existing, uploading, multi, onFile, onDownload, onDelet
           </div>
         </div>
         <div className="flex-1 overflow-auto p-6">
-          <p className="text-gray-400 text-xs mb-4">Se combinarán en este orden (arrastra para reordenar):</p>
+          <p className="text-gray-400 text-xs mb-4">Se combinarán en este orden (usa las flechas para reordenar):</p>
           <div className="space-y-2 max-w-md">
             {multiFiles.map((f, i) => (
               <div key={i} className="flex items-center gap-3 bg-gray-800 rounded-lg px-4 py-3">
@@ -1601,6 +1655,34 @@ function DocZone({ slot, existing, uploading, multi, onFile, onDownload, onDelet
                 <FileText size={16} className="text-gray-400 shrink-0" />
                 <span className="text-sm text-gray-200 truncate">{f.name}</span>
                 <span className="text-xs text-gray-500 ml-auto shrink-0">{(f.size / 1024).toFixed(0)} KB</span>
+                <div className="flex items-center gap-0.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => moveMultiFile(i, -1)}
+                    disabled={i === 0}
+                    className="p-1 rounded text-gray-400 hover:text-white hover:bg-gray-700 disabled:opacity-20 disabled:pointer-events-none"
+                    title="Mover arriba"
+                  >
+                    <ChevronUp size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => moveMultiFile(i, 1)}
+                    disabled={i === multiFiles.length - 1}
+                    className="p-1 rounded text-gray-400 hover:text-white hover:bg-gray-700 disabled:opacity-20 disabled:pointer-events-none"
+                    title="Mover abajo"
+                  >
+                    <ChevronDown size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeMultiFile(i)}
+                    className="p-1 rounded text-gray-400 hover:text-red-400 hover:bg-gray-700"
+                    title="Quitar archivo"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
               </div>
             ))}
           </div>

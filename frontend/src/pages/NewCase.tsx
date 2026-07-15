@@ -223,7 +223,7 @@ export default function NewCase() {
         const part = s.includes('-') ? (s.split('-')[1] ?? '0') : s
         return parseInt(part, 10)
       }
-      const maxNum = (allCases ?? []).reduce((max, c: any) => {
+      const maxNum = (allCases ?? []).reduce((max: number, c: any) => {
         const n = parseCorr(c.correlativo ?? '0')
         return isNaN(n) ? max : Math.max(max, n)
       }, 0)
