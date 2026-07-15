@@ -13,6 +13,7 @@ import NewCase from '@/pages/NewCase'
 import Patients from '@/pages/Patients'
 import Documents from '@/pages/Documents'
 import Upload from '@/pages/Upload'
+import MergePdf from '@/pages/MergePdf'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { userId } = useStore()
@@ -68,6 +69,7 @@ export default function App() {
           <Route path="patients" element={<Patients />} />
           <Route path="documents" element={<Documents />} />
           <Route path="upload" element={<Upload />} />
+          <Route path="unir-pdf" element={<MergePdf />} />
         </Route>
      
         <Route path="*" element={<Navigate to="/" replace />} />
