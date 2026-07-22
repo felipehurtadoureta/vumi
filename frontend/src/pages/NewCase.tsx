@@ -286,7 +286,7 @@ export default function NewCase() {
       const isBono = bonifIsapre > 0 || bonifComplementario > 0
 
       if (isBono) {
-        const caseUpdates: Record<string, string | null> = {}
+        const caseUpdates: Record<string, string | null | boolean> = {}
 
         // Si la isapre ya bonificó → el bono incluye la liquidación → marcar paso 1 como completo
         if (bonifIsapre > 0) {
@@ -296,6 +296,12 @@ export default function NewCase() {
             document_id: doc.id,
             role:        'liquidacion_banmedica',
           })
+          // Marcar el flag real de liquidación (no solo la fecha de envío): el
+          // bono YA incluye el rol 'liquidacion_banmedica' arriba, así que la
+          // columna debe reflejarlo. Si no, pantallas que leen has_liquidacion_banmedica
+          // directo (tabla de Historial, Resumen, Dashboard) muestran el caso
+          // como pendiente aunque en el detalle del caso ya aparezca completo.
+          caseUpdates.has_liquidacion_banmedica = true
           // Auto-llenar fecha de envío Banmédica con fecha de atención
           if (fecha) caseUpdates.banmedica_sent_at = fecha
         }
