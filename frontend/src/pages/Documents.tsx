@@ -1,8 +1,8 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { FileText, AlertCircle, CheckCircle, Clock, Upload, RefreshCw, AlertTriangle, Trash2 } from 'lucide-react'
+import { FileText, AlertCircle, CheckCircle, Clock, Upload, RefreshCw, AlertTriangle, Trash2, Eye, Pencil, X, Save } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
-import type { Document } from '@/lib/types'
+import type { Document, DocumentType } from '@/lib/types'
 import { DOC_TYPE_LABELS } from '@/lib/types'
 import EmptyState from '@/components/ui/EmptyState'
 import { format } from 'date-fns'
@@ -14,6 +14,19 @@ export default function Documents() {
   const [refreshing, setRefreshing] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [deleting, setDeleting] = useState(false)
+
+  // Visor de documento
+  const [viewerUrl, setViewerUrl] = useState('')
+  const [viewerName, setViewerName] = useState('')
+  const [viewerPdf, setViewerPdf] = useState(false)
+
+  // Edición de documento
+  const [editingDoc, setEditingDoc] = useState<Document | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editType, setEditType] = useState<DocumentType | ''>('')
+  const [editPatient, setEditPatient] = useState('')
+  const [editAmount, setEditAmount] = useState('')
+  const [savingEdit, setSavingEdit] = useState(false)
 
   const allSelected = docs.length > 0 && selected.size === docs.length
   const someSelected = selected.size > 0
@@ -53,6 +66,49 @@ export default function Documents() {
     await supabase.from('documents').delete().eq('id', doc.id)
     setDocs((prev) => prev.filter((d) => d.id !== doc.id))
     setSelected((prev) => { const next = new Set(prev); next.delete(doc.id); return next })
+  }
+
+  async function viewDoc(doc: Document) {
+    const { data } = await supabase.storage.from('documents').createSignedUrl(doc.storage_path, 3600)
+    if (!data?.signedUrl) return
+    setViewerUrl(data.signedUrl)
+    setViewerName(doc.original_name)
+    setViewerPdf(doc.mime_type === 'application/pdf')
+  }
+
+  function openEdit(doc: Document) {
+    setEditingDoc(doc)
+    setEditName(doc.original_name)
+    setEditType(doc.doc_type ?? '')
+    setEditPatient(doc.extracted_patient_name ?? '')
+    setEditAmount(doc.extracted_amount != null ? String(doc.extracted_amount) : '')
+  }
+
+  function closeEdit() {
+    setEditingDoc(null)
+  }
+
+  async function saveEdit() {
+    if (!editingDoc) return
+    const name = editName.trim()
+    if (!name) return
+    setSavingEdit(true)
+
+    const updates: Partial<Document> = {
+      original_name: name,
+      doc_type: (editType || null) as DocumentType | null,
+      extracted_patient_name: editPatient.trim() || null,
+      extracted_amount: editAmount.trim() ? Number(editAmount.trim()) : null,
+    }
+
+    const { error } = await supabase.from('documents').update(updates).eq('id', editingDoc.id)
+    if (!error) {
+      setDocs((prev) => prev.map((d) => (d.id === editingDoc.id ? { ...d, ...updates } : d)))
+      setEditingDoc(null)
+    } else {
+      window.alert('No se pudo guardar: ' + error.message)
+    }
+    setSavingEdit(false)
   }
 
   const loadDocs = useCallback(async (silent = false) => {
@@ -270,19 +326,127 @@ export default function Documents() {
                       {format(new Date(d.created_at), 'dd/MM/yy HH:mm')}
                     </td>
                     <td className="px-3 py-4">
-                      <button
-                        onClick={() => deleteOne(d)}
-                        className="text-gray-300 hover:text-red-500 transition-colors"
-                        title="Eliminar"
-                      >
-                        <Trash2 size={15} />
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => viewDoc(d)}
+                          className="text-gray-300 hover:text-blue-500 transition-colors"
+                          title="Ver"
+                        >
+                          <Eye size={15} />
+                        </button>
+                        <button
+                          onClick={() => openEdit(d)}
+                          className="text-gray-300 hover:text-green-600 transition-colors"
+                          title="Editar / renombrar"
+                        >
+                          <Pencil size={15} />
+                        </button>
+                        <button
+                          onClick={() => deleteOne(d)}
+                          className="text-gray-300 hover:text-red-500 transition-colors"
+                          title="Eliminar"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 )
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* ── Visor de documento ── */}
+      {viewerUrl && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-black/90">
+          <div className="flex items-center justify-between px-4 py-3 bg-gray-900 shrink-0">
+            <span className="text-sm text-gray-200 truncate max-w-sm">{viewerName}</span>
+            <button
+              onClick={() => { setViewerUrl(''); setViewerName('') }}
+              className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-gray-700"
+            >
+              <X size={18} />
+            </button>
+          </div>
+          <div className="flex-1 overflow-auto flex items-start justify-center p-4">
+            {viewerPdf
+              ? <iframe src={viewerUrl} className="w-full max-w-3xl rounded" style={{ height: 'calc(100vh - 80px)' }} />
+              : <img src={viewerUrl} alt={viewerName} className="max-w-3xl w-full rounded shadow-xl object-contain" />
+            }
+          </div>
+        </div>
+      )}
+
+      {/* ── Editar / renombrar documento ── */}
+      {editingDoc && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-gray-900">Editar documento</h2>
+              <button onClick={closeEdit} className="text-gray-400 hover:text-gray-600">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Nombre del archivo</label>
+                <input
+                  type="text"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="input w-full"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Tipo de documento</label>
+                <select
+                  value={editType}
+                  onChange={(e) => setEditType(e.target.value as DocumentType | '')}
+                  className="input w-full"
+                >
+                  <option value="">Sin clasificar</option>
+                  {Object.entries(DOC_TYPE_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Paciente</label>
+                <input
+                  type="text"
+                  value={editPatient}
+                  onChange={(e) => setEditPatient(e.target.value)}
+                  className="input w-full"
+                  placeholder="Nombre del paciente"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Monto</label>
+                <input
+                  type="number"
+                  value={editAmount}
+                  onChange={(e) => setEditAmount(e.target.value)}
+                  className="input w-full"
+                  placeholder="0"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 mt-6">
+              <button onClick={closeEdit} className="btn-secondary">Cancelar</button>
+              <button onClick={saveEdit} disabled={savingEdit || !editName.trim()} className="btn-primary">
+                <Save size={15} />
+                {savingEdit ? 'Guardando...' : 'Guardar'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
