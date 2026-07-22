@@ -1,12 +1,6 @@
 import { supabase } from './supabase'
-import * as pdfjsLib from 'pdfjs-dist'
+import { pdfjsLib } from './pdfWorker'
 import Tesseract from 'tesseract.js'
-
-// Configurar worker de PDF.js
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url,
-).toString()
 
 export interface ExtractedMetadata {
   provider_rut?: string              // RUT del centro médico / emisor
@@ -35,7 +29,7 @@ export interface OCRResult {
 // Extracción de texto
 // ─────────────────────────────────────────────
 
-async function extractTextFromPDF(buffer: ArrayBuffer): Promise<string> {
+async function extractTextFromPDFRaw(buffer: ArrayBuffer): Promise<string> {
   // pdfjs detacha el buffer al tomarlo — usar copia para preservar el original
   const pdf = await pdfjsLib.getDocument({ data: buffer.slice(0) }).promise
   let fullText = ''
@@ -49,6 +43,24 @@ async function extractTextFromPDF(buffer: ArrayBuffer): Promise<string> {
     fullText += pageText + '\n'
   }
   return fullText.trim()
+}
+
+// Envuelve la extracción de texto local en un timeout de 15s. Si el worker
+// de PDF.js falla en cargarse o se cuelga (visto de forma intermitente),
+// esto evita que el análisis se quede "pensando" indefinidamente — en vez
+// de eso, cae rápido al respaldo de Vision IA.
+async function extractTextFromPDF(buffer: ArrayBuffer): Promise<string> {
+  try {
+    return await Promise.race([
+      extractTextFromPDFRaw(buffer),
+      new Promise<string>((_, reject) =>
+        setTimeout(() => reject(new Error('PDF.js timeout (15s) — posible falla del worker')), 15_000)
+      ),
+    ])
+  } catch (err: any) {
+    console.warn('[OCR] extractTextFromPDF falló/timeout:', err.message)
+    return ''
+  }
 }
 
 async function extractTextFromImage(buffer: ArrayBuffer, mimeType: string): Promise<string> {
@@ -448,7 +460,7 @@ function extractJpegFromPdf(buf: ArrayBuffer): string | null {
 }
 
 // Convierte la primera página de un PDF a imagen JPEG via pdfjs (fallback)
-async function pdfPageToDataUrl(buf: ArrayBuffer): Promise<string> {
+async function pdfPageToDataUrlRaw(buf: ArrayBuffer): Promise<string> {
   const pdf = await pdfjsLib.getDocument({ data: buf }).promise
   const page = await pdf.getPage(1)
   const scale = 2.0
@@ -459,6 +471,17 @@ async function pdfPageToDataUrl(buf: ArrayBuffer): Promise<string> {
   const ctx = canvas.getContext('2d')!
   await page.render({ canvasContext: ctx, viewport, canvas }).promise
   return canvas.toDataURL('image/jpeg', 0.88)
+}
+
+// Misma protección de timeout que extractTextFromPDF — evita que un worker
+// de PDF.js colgado deje el análisis atascado indefinidamente.
+async function pdfPageToDataUrl(buf: ArrayBuffer): Promise<string> {
+  return Promise.race([
+    pdfPageToDataUrlRaw(buf),
+    new Promise<string>((_, reject) =>
+      setTimeout(() => reject(new Error('PDF.js render timeout (15s)')), 15_000)
+    ),
+  ])
 }
 
 // Prepara imagen o PDF para enviar a Vision IA (redimensiona si hace falta)
