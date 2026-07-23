@@ -1,9 +1,11 @@
 import { useState } from 'react'
-import { signInWithEmail } from '@/lib/supabase'
-import { Loader2, Mail, CheckCircle } from 'lucide-react'
+import { signInWithEmail, signInWithPassword } from '@/lib/supabase'
+import { Loader2, Mail, CheckCircle, Lock } from 'lucide-react'
 
 export default function Login() {
   const [email, setEmail] = useState('felipehurtadoureta@gmail.com')
+  const [password, setPassword] = useState('')
+  const [usePassword, setUsePassword] = useState(true)
   const [loading, setLoading] = useState(false)
   const [sent, setSent] = useState(false)
   const [error, setError] = useState('')
@@ -12,6 +14,16 @@ export default function Login() {
     e.preventDefault()
     setLoading(true)
     setError('')
+
+    if (usePassword) {
+      const { error } = await signInWithPassword(email, password)
+      if (error) {
+        setError(error.message === 'Invalid login credentials' ? 'Email o contraseña incorrectos' : error.message)
+        setLoading(false)
+      }
+      // si no hay error, el listener de sesión en App.tsx redirige solo
+      return
+    }
 
     const { error } = await signInWithEmail(email)
     if (error) {
@@ -52,6 +64,22 @@ export default function Login() {
               />
             </div>
 
+            {usePassword && (
+              <div className="text-left">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Contraseña
+                </label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="input"
+                  required
+                  autoFocus
+                />
+              </div>
+            )}
+
             {error && (
               <p className="text-sm text-red-600 text-left">{error}</p>
             )}
@@ -62,15 +90,21 @@ export default function Login() {
               className="btn-primary w-full justify-center py-3"
             >
               {loading ? (
-                <><Loader2 size={18} className="animate-spin" /> Enviando...</>
+                <><Loader2 size={18} className="animate-spin" /> {usePassword ? 'Entrando...' : 'Enviando...'}</>
+              ) : usePassword ? (
+                <><Lock size={18} /> Entrar</>
               ) : (
                 <><Mail size={18} /> Entrar con magic link</>
               )}
             </button>
 
-            <p className="text-xs text-gray-400">
-              Te enviaremos un link al correo — sin contraseña
-            </p>
+            <button
+              type="button"
+              onClick={() => { setUsePassword(!usePassword); setError('') }}
+              className="text-xs text-gray-400 hover:text-green-600 underline underline-offset-2"
+            >
+              {usePassword ? 'Prefiero usar magic link' : 'Prefiero usar contraseña'}
+            </button>
           </form>
         )}
       </div>

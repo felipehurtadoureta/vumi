@@ -3,10 +3,10 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Trash2, Loader2, Upload, FileText,
   CheckCircle, Clock, XCircle, Send, Calendar, Download, UserCheck, Users, Eye, X, Files, Check, Archive, RotateCcw,
-  AlertCircle, Plus, BookOpen, Search, ChevronUp, ChevronDown,
+  AlertCircle, Plus, BookOpen, Search, ChevronUp, ChevronDown, FolderOpen, Copy, ClipboardCheck,
 } from 'lucide-react'
 import { mergeFilesToPdf } from '@/lib/mergeFiles'
-import { uploadToDrive, deleteFromDrive, getAccessToken, isDriveAvailable } from '@/lib/googleDrive'
+import { uploadToDrive, deleteFromDrive, getAccessToken, isDriveAvailable, driveFolderLink, localFilePath } from '@/lib/googleDrive'
 import { supabase } from '@/lib/supabase'
 import { useStore } from '@/store/useStore'
 import { processDocument } from '@/lib/ocr'
@@ -74,6 +74,22 @@ export default function CaseDetail() {
   const [viewerUrl,  setViewerUrl]  = useState('')
   const [viewerName, setViewerName] = useState('')
   const [viewerPdf,  setViewerPdf]  = useState(false)
+  const [copiedPathId, setCopiedPathId] = useState<string | null>(null)
+
+  // Copia una ruta local al portapapeles y muestra feedback breve.
+  // Los navegadores no permiten navegar a links file:// desde una página
+  // web por seguridad — copiar la ruta para pegarla en el Explorador es
+  // la alternativa que sí funciona.
+  async function copyLocalPath(id: string, path: string) {
+    try {
+      await navigator.clipboard.writeText(path)
+    } catch {
+      window.prompt('Copia esta ruta manualmente:', path)
+      return
+    }
+    setCopiedPathId(id)
+    setTimeout(() => setCopiedPathId((cur) => (cur === id ? null : cur)), 1500)
+  }
 
   // Paciente
   const [patients, setPatients] = useState<Patient[]>([])
@@ -1219,6 +1235,26 @@ Felipe Hurtado`
                     <FileText size={14} className="text-gray-400 shrink-0" />
                     <span className="text-xs text-gray-700 flex-1 truncate">{doc?.original_name ?? 'Documento'}</span>
                     <button onClick={() => viewDoc(cd)} className="text-blue-500 hover:text-blue-700" title="Ver"><Eye size={13} /></button>
+                    {doc?.drive_link && (
+                      <a
+                        href={driveFolderLink(doc.drive_link)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-amber-500 hover:text-amber-600"
+                        title="Ver ubicación en Drive"
+                      >
+                        <FolderOpen size={13} />
+                      </a>
+                    )}
+                    {doc?.drive_link && localFilePath(doc.original_name) && (
+                      <button
+                        onClick={() => copyLocalPath(cd.id, localFilePath(doc.original_name)!)}
+                        className={copiedPathId === cd.id ? 'text-green-600' : 'text-gray-400 hover:text-gray-600'}
+                        title="Copiar ruta local (pégala en el Explorador)"
+                      >
+                        {copiedPathId === cd.id ? <ClipboardCheck size={13} /> : <Copy size={13} />}
+                      </button>
+                    )}
                     <button onClick={() => downloadDoc(cd)} className="text-green-600 hover:text-green-700" title="Descargar"><Download size={13} /></button>
                     <button onClick={() => deleteOtroDoc(cd)} className="text-red-400 hover:text-red-600" title="Quitar"><Trash2 size={13} /></button>
                   </div>
@@ -1556,6 +1592,18 @@ function DocZone({ slot, existing, uploading, multi, onFile, onDownload, onDelet
   const [previewFile,   setPreviewFile]   = useState<File | null>(null)
   const [previewUrl,    setPreviewUrl]    = useState('')
   const [multiFiles,    setMultiFiles]    = useState<File[]>([])
+  const [copied,        setCopied]        = useState(false)
+
+  async function copyLocalPath(path: string) {
+    try {
+      await navigator.clipboard.writeText(path)
+    } catch {
+      window.prompt('Copia esta ruta manualmente:', path)
+      return
+    }
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
   const [merging,       setMerging]       = useState(false)
   const doc = (existing?.document as any)
   const inputId = `doc-input-${slot.type}`
@@ -1763,7 +1811,7 @@ function DocZone({ slot, existing, uploading, multi, onFile, onDownload, onDelet
             <span className="text-xs font-semibold text-gray-700">{slot.label}</span>
           </div>
           <p className="text-xs text-gray-500 truncate max-w-full">{doc?.original_name}</p>
-          <div className="flex items-center justify-center gap-3">
+          <div className="flex items-center justify-center gap-3 flex-wrap">
             <span className="text-xs text-gray-400 hover:text-green-600 underline underline-offset-2">
               Reemplazar
             </span>
@@ -1777,26 +1825,52 @@ function DocZone({ slot, existing, uploading, multi, onFile, onDownload, onDelet
                 <BookOpen size={11} /> Biblioteca
               </button>
             )}
+          </div>
+          <div className="flex items-center justify-center gap-2.5">
             <button
               onClick={(e) => { e.preventDefault(); e.stopPropagation(); onView() }}
-              className="text-xs text-blue-500 hover:text-blue-700"
+              className="text-blue-500 hover:text-blue-700"
               title="Ver"
             >
-              <Eye size={12} />
+              <Eye size={13} />
             </button>
+            {doc?.drive_link && (
+              <a
+                href={driveFolderLink(doc.drive_link)}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="text-amber-500 hover:text-amber-600"
+                title="Ver ubicación en Drive"
+              >
+                <FolderOpen size={13} />
+              </a>
+            )}
+            {doc?.drive_link && localFilePath(doc.original_name) && (
+              <button
+                onClick={(e) => {
+                  e.preventDefault(); e.stopPropagation()
+                  copyLocalPath(localFilePath(doc.original_name)!)
+                }}
+                className={copied ? 'text-green-600' : 'text-gray-400 hover:text-gray-600'}
+                title="Copiar ruta local (pégala en el Explorador)"
+              >
+                {copied ? <ClipboardCheck size={13} /> : <Copy size={13} />}
+              </button>
+            )}
             <button
               onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDownload() }}
-              className="text-xs text-green-600 hover:text-green-700"
+              className="text-green-600 hover:text-green-700"
               title="Descargar"
             >
-              <Download size={12} />
+              <Download size={13} />
             </button>
             <button
               onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete() }}
-              className="text-xs text-red-400 hover:text-red-600"
+              className="text-red-400 hover:text-red-600"
               title="Eliminar"
             >
-              <Trash2 size={12} />
+              <Trash2 size={13} />
             </button>
           </div>
         </div>

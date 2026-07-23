@@ -1,9 +1,10 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { FileText, AlertCircle, CheckCircle, Clock, Upload, RefreshCw, AlertTriangle, Trash2, Eye, Pencil, X, Save } from 'lucide-react'
+import { FileText, AlertCircle, CheckCircle, Clock, Upload, RefreshCw, AlertTriangle, Trash2, Eye, Pencil, X, Save, FolderOpen, Copy, ClipboardCheck } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import type { Document, DocumentType } from '@/lib/types'
 import { DOC_TYPE_LABELS } from '@/lib/types'
+import { deleteFromDrive, renameInDrive, isDriveAvailable, driveFolderLink, localFilePath } from '@/lib/googleDrive'
 import EmptyState from '@/components/ui/EmptyState'
 import { format } from 'date-fns'
 import clsx from 'clsx'
@@ -28,6 +29,21 @@ export default function Documents() {
   const [editAmount, setEditAmount] = useState('')
   const [savingEdit, setSavingEdit] = useState(false)
 
+  // Copiar ruta local al portapapeles (los navegadores bloquean navegar a
+  // links file:// desde una página web, así que copiarla es la alternativa
+  // que sí funciona para abrirla en el Explorador de Windows)
+  const [copiedPathId, setCopiedPathId] = useState<string | null>(null)
+  async function copyLocalPath(id: string, path: string) {
+    try {
+      await navigator.clipboard.writeText(path)
+    } catch {
+      window.prompt('Copia esta ruta manualmente:', path)
+      return
+    }
+    setCopiedPathId(id)
+    setTimeout(() => setCopiedPathId((cur) => (cur === id ? null : cur)), 1500)
+  }
+
   const allSelected = docs.length > 0 && selected.size === docs.length
   const someSelected = selected.size > 0
 
@@ -43,27 +59,95 @@ export default function Documents() {
     setSelected(allSelected ? new Set() : new Set(docs.map((d) => d.id)))
   }
 
+  // Documentos de la biblioteca vinculados a algún caso no se pueden borrar
+  // (la BD lo impide con una restricción de integridad) — hay que avisar
+  // en vez de dejar el archivo a medio eliminar (storage borrado pero
+  // el registro sigue existiendo, lo que rompe "Ver").
+  async function findLinkedCases(docIds: string[]): Promise<Set<string>> {
+    if (docIds.length === 0) return new Set()
+    const { data } = await supabase
+      .from('case_documents')
+      .select('document_id')
+      .in('document_id', docIds)
+    return new Set((data ?? []).map((r: any) => r.document_id))
+  }
+
   async function deleteSelected() {
-    if (!window.confirm(`¿Eliminar ${selected.size} documento${selected.size > 1 ? 's' : ''}? Esta acción no se puede deshacer.`)) return
     setDeleting(true)
     const toDelete = docs.filter((d) => selected.has(d.id))
-    const storagePaths = toDelete.map((d) => d.storage_path)
 
+    const linked = await findLinkedCases(toDelete.map((d) => d.id))
+    const removable = toDelete.filter((d) => !linked.has(d.id))
+    const blocked = toDelete.filter((d) => linked.has(d.id))
+
+    if (blocked.length > 0) {
+      window.alert(
+        `${blocked.length} documento${blocked.length > 1 ? 's están' : ' está'} vinculado${blocked.length > 1 ? 's' : ''} a un caso y no se puede${blocked.length > 1 ? 'n' : ''} eliminar desde aquí:\n` +
+        blocked.map((d) => `• ${d.original_name}`).join('\n') +
+        `\n\nQuítalo${blocked.length > 1 ? 's' : ''} primero del caso correspondiente.`
+      )
+    }
+    if (removable.length === 0) { setDeleting(false); return }
+    if (!window.confirm(`¿Eliminar ${removable.length} documento${removable.length > 1 ? 's' : ''}? Esta acción no se puede deshacer.`)) {
+      setDeleting(false)
+      return
+    }
+
+    // 1. Borrar primero el registro en la BD (si falla, no tocar storage/Drive)
+    const ids = removable.map((d) => d.id)
+    const { error } = await supabase.from('documents').delete().in('id', ids)
+    if (error) {
+      window.alert('No se pudo eliminar: ' + error.message)
+      setDeleting(false)
+      return
+    }
+
+    // 2. Borrar del storage
+    const storagePaths = removable.map((d) => d.storage_path)
     if (storagePaths.length > 0)
       await supabase.storage.from('documents').remove(storagePaths)
 
-    const ids = toDelete.map((d) => d.id)
-    await supabase.from('documents').delete().in('id', ids)
+    // 3. Borrar de Drive
+    if (isDriveAvailable()) {
+      for (const d of removable) {
+        if (d.drive_link) {
+          deleteFromDrive(d.drive_link).catch(e =>
+            console.warn('[Drive] delete failed:', e.message)
+          )
+        }
+      }
+    }
 
-    setDocs((prev) => prev.filter((d) => !selected.has(d.id)))
+    setDocs((prev) => prev.filter((d) => !ids.includes(d.id)))
     setSelected(new Set())
     setDeleting(false)
   }
 
   async function deleteOne(doc: Document) {
+    const linked = await findLinkedCases([doc.id])
+    if (linked.has(doc.id)) {
+      window.alert(`"${doc.original_name}" está vinculado a un caso y no se puede eliminar desde aquí. Quítalo primero del caso correspondiente.`)
+      return
+    }
     if (!window.confirm(`¿Eliminar "${doc.original_name}"?`)) return
+
+    // 1. Borrar primero el registro en la BD (si falla, no tocar storage/Drive)
+    const { error } = await supabase.from('documents').delete().eq('id', doc.id)
+    if (error) {
+      window.alert('No se pudo eliminar: ' + error.message)
+      return
+    }
+
+    // 2. Borrar del storage
     await supabase.storage.from('documents').remove([doc.storage_path])
-    await supabase.from('documents').delete().eq('id', doc.id)
+
+    // 3. Borrar de Drive
+    if (doc.drive_link && isDriveAvailable()) {
+      deleteFromDrive(doc.drive_link).catch(e =>
+        console.warn('[Drive] delete failed:', e.message)
+      )
+    }
+
     setDocs((prev) => prev.filter((d) => d.id !== doc.id))
     setSelected((prev) => { const next = new Set(prev); next.delete(doc.id); return next })
   }
@@ -103,6 +187,12 @@ export default function Documents() {
 
     const { error } = await supabase.from('documents').update(updates).eq('id', editingDoc.id)
     if (!error) {
+      // Renombrar también en Drive si el nombre cambió
+      if (name !== editingDoc.original_name && editingDoc.drive_link && isDriveAvailable()) {
+        renameInDrive(editingDoc.drive_link, name).catch(e =>
+          console.warn('[Drive] rename failed:', e.message)
+        )
+      }
       setDocs((prev) => prev.map((d) => (d.id === editingDoc.id ? { ...d, ...updates } : d)))
       setEditingDoc(null)
     } else {
@@ -334,6 +424,26 @@ export default function Documents() {
                         >
                           <Eye size={15} />
                         </button>
+                        {d.drive_link && (
+                          <a
+                            href={driveFolderLink(d.drive_link)}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-gray-300 hover:text-amber-500 transition-colors"
+                            title="Ver ubicación en Drive"
+                          >
+                            <FolderOpen size={15} />
+                          </a>
+                        )}
+                        {d.drive_link && localFilePath(d.original_name, 'Docs') && (
+                          <button
+                            onClick={() => copyLocalPath(d.id, localFilePath(d.original_name, 'Docs')!)}
+                            className={copiedPathId === d.id ? 'text-green-600' : 'text-gray-300 hover:text-gray-600 transition-colors'}
+                            title="Copiar ruta local (pégala en el Explorador)"
+                          >
+                            {copiedPathId === d.id ? <ClipboardCheck size={15} /> : <Copy size={15} />}
+                          </button>
+                        )}
                         <button
                           onClick={() => openEdit(d)}
                           className="text-gray-300 hover:text-green-600 transition-colors"

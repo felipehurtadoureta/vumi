@@ -123,7 +123,8 @@ export default function Upload() {
           setFileStatus(i, { status: 'drive_uploading', docId: doc.id })
           try {
             const driveLink = await uploadToDrive(new File([f], f.name, { type: f.type }), 'Docs')
-            setFileStatus(i, { status: 'done', driveLink })
+            await supabase.from('documents').update({ drive_link: driveLink }).eq('id', doc.id)
+            setFileStatus(i, { status: 'done', driveLink, docId: doc.id })
           } catch {
             setFileStatus(i, { status: 'done', docId: doc.id })
           }
