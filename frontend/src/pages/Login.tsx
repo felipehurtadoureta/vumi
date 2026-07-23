@@ -1,8 +1,12 @@
 import { useState } from 'react'
+import { Navigate, useNavigate } from 'react-router-dom'
 import { signInWithEmail, signInWithPassword } from '@/lib/supabase'
+import { useStore } from '@/store/useStore'
 import { Loader2, Mail, CheckCircle, Lock } from 'lucide-react'
 
 export default function Login() {
+  const navigate = useNavigate()
+  const { userId } = useStore()
   const [email, setEmail] = useState('felipehurtadoureta@gmail.com')
   const [password, setPassword] = useState('')
   const [usePassword, setUsePassword] = useState(true)
@@ -20,8 +24,12 @@ export default function Login() {
       if (error) {
         setError(error.message === 'Invalid login credentials' ? 'Email o contraseña incorrectos' : error.message)
         setLoading(false)
+        return
       }
-      // si no hay error, el listener de sesión en App.tsx redirige solo
+      // Login exitoso: App.tsx actualiza userId vía el listener de sesión,
+      // pero nada saca de /login automáticamente — hay que navegar a mano.
+      setLoading(false)
+      navigate('/', { replace: true })
       return
     }
 
@@ -34,6 +42,9 @@ export default function Login() {
       setLoading(false)
     }
   }
+
+  // Ya hay sesión activa (ej. al volver atrás con el navegador) — no quedarse en /login
+  if (userId) return <Navigate to="/" replace />
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-white flex items-center justify-center">
