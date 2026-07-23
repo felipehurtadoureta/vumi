@@ -7,6 +7,9 @@ const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string
 const FOLDER_ID = import.meta.env.VITE_DRIVE_FOLDER_ID  as string
 const SCOPE     = 'https://www.googleapis.com/auth/drive'
 
+// Ruta local (Windows) donde Google Drive for Desktop sincroniza la carpeta "Vumi"
+const LOCAL_FOLDER = (import.meta.env.VITE_LOCAL_DRIVE_FOLDER as string | undefined)?.trim()
+
 // ── Minimal GIS type declarations ──────────────────────────
 interface GisTokenResponse {
   access_token: string
@@ -229,6 +232,60 @@ export async function deleteFromDrive(driveLink: string): Promise<void> {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${token}` },
   })
+}
+
+// ── Rename file in Drive by its webViewLink ──────────────────
+export async function renameInDrive(driveLink: string, newName: string): Promise<void> {
+  const fileId = driveLink.match(/\/d\/([^/]+)\//)?.[1]
+  if (!fileId) return
+  const token = await getAccessToken()
+  await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ name: newName }),
+  })
+}
+
+// ── Link que abre la carpeta de Drive con el archivo seleccionado ──
+// (a diferencia del webViewLink normal, que abre el visor del archivo)
+export function driveFolderLink(driveLink: string): string {
+  const fileId = driveLink.match(/\/d\/([^/]+)\//)?.[1]
+  if (!fileId) return driveLink
+  return `https://drive.google.com/open?id=${fileId}`
+}
+
+// ── Link file:// al archivo sincronizado localmente por Drive Desktop ──
+function toFileUrl(windowsPath: string): string {
+  const parts = windowsPath.split(/[\\/]/).filter(Boolean)
+  // La primera parte es la letra de unidad (ej. "H:") — no se debe codificar
+  // el ":" o el link queda roto (file:///H%3A/...) y Windows no lo reconoce.
+  const [drive, ...rest] = parts
+  return `file:///${drive}/${rest.map(p => encodeURIComponent(p)).join('/')}`
+}
+
+// Ruta local (Windows, sin codificar) del archivo — para copiar al portapapeles.
+// Los navegadores bloquean la navegación a links file:// desde una página
+// web por seguridad, así que el link solo sirve como referencia; para
+// abrir el archivo hay que copiar la ruta y pegarla en el Explorador.
+// subfolder: 'Docs' para documentos de biblioteca, sin indicar para docs de caso
+export function localFilePath(originalName: string, subfolder?: string): string | null {
+  if (!LOCAL_FOLDER) return null
+  return subfolder
+    ? `${LOCAL_FOLDER}\\${subfolder}\\${originalName}`
+    : `${LOCAL_FOLDER}\\${originalName}`
+}
+
+// subfolder: 'Docs' para documentos de biblioteca, sin indicar para docs de caso
+export function localFileLink(originalName: string, subfolder?: string): string | null {
+  const path = localFilePath(originalName, subfolder)
+  return path ? toFileUrl(path) : null
+}
+
+export function isLocalDriveAvailable(): boolean {
+  return !!LOCAL_FOLDER
 }
 
 // ── Check feature availability ───────────────────────────────

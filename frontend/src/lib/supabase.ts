@@ -16,6 +16,9 @@ export const signInWithEmail = (email: string) =>
     options: { emailRedirectTo: window.location.origin },
   })
 
+export const signInWithPassword = (email: string, password: string) =>
+  supabase.auth.signInWithPassword({ email, password })
+
 export const signOut = () => supabase.auth.signOut()
 
 export const getUser = () => supabase.auth.getUser()
