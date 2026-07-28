@@ -317,11 +317,17 @@ export default function NewCase() {
       }
 
       // Subir a Drive con el nombre ya calculado (en background, no bloquea)
+      // IMPORTANTE: hay que guardar el drive_link resultante en el documento.
+      // Si no se guarda, cualquier acción posterior que revise "¿tiene link
+      // de Drive?" (ej. generar el correo a VUMI) cree que nunca se subió y
+      // lo vuelve a subir — creando un archivo duplicado en Drive.
       if (driveReady && file) {
         const driveFile = new File([file], docName, { type: file.type })
-        uploadToDrive(driveFile).catch(e =>
-          console.warn('[Drive] NewCase upload failed:', e.message)
-        )
+        uploadToDrive(driveFile)
+          .then(driveLink =>
+            supabase.from('documents').update({ drive_link: driveLink }).eq('id', doc.id)
+          )
+          .catch(e => console.warn('[Drive] NewCase upload failed:', e.message))
       }
 
       navigate(`/cases/${mc.id}`)
