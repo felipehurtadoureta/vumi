@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Trash2, Loader2, Upload, FileText,
   CheckCircle, Clock, XCircle, Send, Calendar, Download, UserCheck, Users, Eye, X, Files, Check, Archive, RotateCcw,
-  AlertCircle, Plus, BookOpen, Search, ChevronUp, ChevronDown, FolderOpen, Copy, ClipboardCheck,
+  AlertCircle, Plus, BookOpen, Search, ChevronUp, ChevronDown, FolderOpen, Copy, ClipboardCheck, Pencil, Save,
 } from 'lucide-react'
 import { mergeFilesToPdf } from '@/lib/mergeFiles'
 import { uploadToDrive, deleteFromDrive, getAccessToken, isDriveAvailable, driveFolderLink, localFilePath } from '@/lib/googleDrive'
@@ -125,6 +125,9 @@ export default function CaseDetail() {
   const [reopenModalOpen, setReopenModalOpen] = useState(false)
   const [reopenTargets, setReopenTargets] = useState<string[]>([])
   const [reopenNote, setReopenNote] = useState('')
+  const [editingNote, setEditingNote] = useState(false)
+  const [noteDraft, setNoteDraft] = useState('')
+  const [savingNote, setSavingNote] = useState(false)
 
   // ── load ──────────────────────────────────────────────────────────────
   async function loadCase() {
@@ -639,6 +642,21 @@ Felipe Hurtado`
     await loadCase()
   }
 
+  // ── editar motivo de reapertura ────────────────────────────────────────
+  function openEditNote() {
+    setNoteDraft(caseData?.notes ?? '')
+    setEditingNote(true)
+  }
+
+  async function saveNote() {
+    if (!id) return
+    setSavingNote(true)
+    await supabase.from('medical_cases').update({ notes: noteDraft.trim() || null }).eq('id', id)
+    setSavingNote(false)
+    setEditingNote(false)
+    await loadCase()
+  }
+
   async function clearSentDate(field: 'banmedica_sent_at' | 'metlife_sent_at' | 'vumi_sent_at') {
     if (!id) return
     setClearingSentDate(field)
@@ -1070,10 +1088,19 @@ Felipe Hurtado`
             {caseData.status === 'NUEVA_INFO' && !isCaseComplete && (
               <div className="mt-3 flex items-start gap-2 bg-orange-50 border border-orange-200 rounded-xl px-3 py-2.5 text-sm text-orange-800">
                 <RotateCcw size={14} className="mt-0.5 shrink-0 text-orange-500" />
-                {caseData.notes
-                  ? <span><span className="font-medium">Motivo reapertura:</span> {caseData.notes}</span>
-                  : <span className="font-medium">Caso en espera de información adicional</span>
-                }
+                <span className="flex-1">
+                  {caseData.notes
+                    ? <span><span className="font-medium">Motivo reapertura:</span> {caseData.notes}</span>
+                    : <span className="font-medium">Caso en espera de información adicional</span>
+                  }
+                </span>
+                <button
+                  onClick={openEditNote}
+                  className="shrink-0 text-orange-400 hover:text-orange-600"
+                  title="Editar motivo"
+                >
+                  <Pencil size={12} />
+                </button>
               </div>
             )}
 
@@ -1171,13 +1198,44 @@ Felipe Hurtado`
           <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center shrink-0">
             <AlertCircle size={20} className="text-orange-500" />
           </div>
-          <div>
+          <div className="flex-1">
             <p className="font-semibold text-orange-900">En espera de información adicional</p>
-            <p className="text-sm text-orange-700 mt-0.5">
-              {caseData.notes
-                ? caseData.notes
-                : 'La aseguradora solicitó más antecedentes. Sube los documentos requeridos en la sección de abajo.'}
-            </p>
+            {editingNote ? (
+              <div className="mt-2 space-y-2">
+                <textarea
+                  value={noteDraft}
+                  onChange={(e) => setNoteDraft(e.target.value)}
+                  rows={3}
+                  autoFocus
+                  className="w-full text-sm border border-orange-200 rounded-xl px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white"
+                  placeholder="Motivo de la reapertura…"
+                />
+                <div className="flex gap-2">
+                  <button onClick={saveNote} disabled={savingNote} className="btn-primary text-xs py-1.5">
+                    {savingNote ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                    Guardar
+                  </button>
+                  <button onClick={() => setEditingNote(false)} className="btn-secondary text-xs py-1.5">
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-orange-700 mt-0.5 flex items-start gap-2">
+                <span className="flex-1">
+                  {caseData.notes
+                    ? caseData.notes
+                    : 'La aseguradora solicitó más antecedentes. Sube los documentos requeridos en la sección de abajo.'}
+                </span>
+                <button
+                  onClick={openEditNote}
+                  className="shrink-0 text-orange-400 hover:text-orange-600"
+                  title="Editar motivo"
+                >
+                  <Pencil size={13} />
+                </button>
+              </p>
+            )}
           </div>
         </div>
       )}
