@@ -288,21 +288,13 @@ export default function NewCase() {
       if (isBono) {
         const caseUpdates: Record<string, string | null | boolean> = {}
 
-        // Si la isapre ya bonificó → el bono incluye la liquidación → marcar paso 1 como completo
+        // Si la isapre ya bonificó → el bono incluye la liquidación, no hace
+        // falta subir un documento aparte. NOTA: no se puede vincular el
+        // mismo documento dos veces con otro rol (case_documents.document_id
+        // es UNIQUE) — el trigger de la base de datos (update_case_completeness)
+        // ya detecta este caso leyendo el monto de la boleta directamente,
+        // así que acá solo hace falta autocompletar la fecha de envío.
         if (bonifIsapre > 0) {
-          // Enlazar el mismo documento también como liquidacion_banmedica
-          await supabase.from('case_documents').insert({
-            case_id:     mc.id,
-            document_id: doc.id,
-            role:        'liquidacion_banmedica',
-          })
-          // Marcar el flag real de liquidación (no solo la fecha de envío): el
-          // bono YA incluye el rol 'liquidacion_banmedica' arriba, así que la
-          // columna debe reflejarlo. Si no, pantallas que leen has_liquidacion_banmedica
-          // directo (tabla de Historial, Resumen, Dashboard) muestran el caso
-          // como pendiente aunque en el detalle del caso ya aparezca completo.
-          caseUpdates.has_liquidacion_banmedica = true
-          // Auto-llenar fecha de envío Banmédica con fecha de atención
           if (fecha) caseUpdates.banmedica_sent_at = fecha
         }
 
