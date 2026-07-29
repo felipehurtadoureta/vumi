@@ -130,6 +130,7 @@ function CaseTable({ rows }: { rows: MedicalCase[] }) {
               <td className="px-4 py-3 text-xs text-gray-500">
                 {c.event_date ? format((() => { const [y,m,d] = c.event_date!.split('-').map(Number); return new Date(y,m-1,d) })(), 'dd/MM/yyyy') : '—'}
                 {c.boleta_number && <p className="text-gray-400">N° {c.boleta_number}</p>}
+                {c.created_at && <p className="text-gray-300">Creado {format(new Date(c.created_at), 'dd/MM/yy')}</p>}
               </td>
               <td className="px-4 py-3 text-xs font-medium text-gray-700">
                 {c.total_amount

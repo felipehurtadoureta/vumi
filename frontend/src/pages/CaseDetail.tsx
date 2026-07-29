@@ -1070,6 +1070,12 @@ Felipe Hurtado`
                   <span>Boleta N° {caseData.boleta_number}</span>
                 </>
               )}
+              {caseData.created_at && (
+                <>
+                  {(caseData.event_date || caseData.boleta_number) && <span>·</span>}
+                  <span className="text-xs">Creado {fmtDate(caseData.created_at)}</span>
+                </>
+              )}
             </p>
             <p className="text-sm text-gray-500 flex items-center gap-2">
               {patient?.full_name ?? <span className="italic text-amber-600">Sin paciente</span>}
