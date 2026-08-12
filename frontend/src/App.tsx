@@ -14,6 +14,12 @@ import Patients from '@/pages/Patients'
 import Documents from '@/pages/Documents'
 import Upload from '@/pages/Upload'
 import MergePdf from '@/pages/MergePdf'
+import HojaDeVidaPacientes from '@/hoja-de-vida/pages/Pacientes'
+import Historial from '@/hoja-de-vida/pages/Historial'
+import SubirInforme from '@/hoja-de-vida/pages/SubirInforme'
+import DetalleInforme from '@/hoja-de-vida/pages/DetalleInforme'
+import Tendencias from '@/hoja-de-vida/pages/Tendencias'
+import ResumenPaciente from '@/hoja-de-vida/pages/ResumenPaciente'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { userId } = useStore()
@@ -70,6 +76,15 @@ export default function App() {
           <Route path="documents" element={<Documents />} />
           <Route path="upload" element={<Upload />} />
           <Route path="unir-pdf" element={<MergePdf />} />
+          <Route path="hoja-de-vida" element={<HojaDeVidaPacientes />} />
+          <Route path="hoja-de-vida/tendencias" element={<Tendencias />} />
+          <Route path="hoja-de-vida/tendencias/:patientId" element={<Tendencias />} />
+          <Route path="hoja-de-vida/resumen" element={<ResumenPaciente />} />
+          <Route path="hoja-de-vida/resumen/:patientId" element={<ResumenPaciente />} />
+          <Route path="hoja-de-vida/:patientId" element={<Historial />} />
+          <Route path="hoja-de-vida/:patientId/subir" element={<SubirInforme />} />
+          <Route path="hoja-de-vida/:patientId/informes/:id" element={<DetalleInforme />} />
+          <Route path="hoja-de-vida/:patientId/informes/:id/procesar" element={<SubirInforme />} />
         </Route>
      
         <Route path="*" element={<Navigate to="/" replace />} />

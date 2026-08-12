@@ -22,6 +22,11 @@ interface AppState {
   // UI
   uploadOpen: boolean
   setUploadOpen: (open: boolean) => void
+
+  // Hoja de Vida Médica — archivo(s) soltado(s) (drag&drop) en la pantalla de
+  // historial, pendientes de procesar en la pantalla de subir informe.
+  pendingHistorialFiles: File[]
+  setPendingHistorialFiles: (f: File[]) => void
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -43,4 +48,7 @@ export const useStore = create<AppState>((set) => ({
 
   uploadOpen: false,
   setUploadOpen: (uploadOpen) => set({ uploadOpen }),
+
+  pendingHistorialFiles: [],
+  setPendingHistorialFiles: (pendingHistorialFiles) => set({ pendingHistorialFiles }),
 }))
