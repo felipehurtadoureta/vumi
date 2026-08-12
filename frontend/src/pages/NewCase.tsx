@@ -99,6 +99,8 @@ export default function NewCase() {
   const [monto,     setMonto]     = useState('')
   const [rutCentro, setRutCentro] = useState('')
   const [rutMedico, setRutMedico] = useState('')
+  const [numBanmedica, setNumBanmedica] = useState('')
+  const [numComplementario, setNumComplementario] = useState('')
 
   useEffect(() => {
     if (!userId) return
@@ -241,6 +243,8 @@ export default function NewCase() {
         total_amount:      monto ? parseInt(monto) : null,
         rut_centro_medico: rutCentro || null,
         rut_medico:        rutMedico || null,
+        numero_banmedica:      numBanmedica      || null,
+        numero_complementario: numComplementario || null,
         status:            'INCOMPLETO',
         currency:          'CLP',
       }).select().single()
@@ -641,6 +645,20 @@ export default function NewCase() {
           onChange={setRutMedico}
           detected={!!ocr?.extracted_metadata?.doctor_rut}
         />
+
+        {/* Números de referencia — llenado manual */}
+        <div className="grid grid-cols-2 gap-3">
+          <Field
+            label="N° Banmédica"
+            value={numBanmedica}
+            onChange={setNumBanmedica}
+          />
+          <Field
+            label="N° Complementario"
+            value={numComplementario}
+            onChange={setNumComplementario}
+          />
+        </div>
 
         {/* Preview nombre del archivo */}
         <div className="text-xs text-gray-400 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">

@@ -58,6 +58,8 @@ export interface MedicalCase {
   rut_centro_medico: string | null
   rut_medico: string | null
   nombre_medico: string | null
+  numero_banmedica: string | null
+  numero_complementario: string | null
   notes: string | null
   case_type: CaseType
   needs_vumi: boolean

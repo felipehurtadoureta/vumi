@@ -187,6 +187,8 @@ export default function Cases() {
       (c.rut_centro_medico || '').toLowerCase().includes(q)           ||
       (c.rut_medico     || '').toLowerCase().includes(q)              ||
       (c.nombre_medico  || '').toLowerCase().includes(q)              ||
+      (c.numero_banmedica      || '').toLowerCase().includes(q)       ||
+      (c.numero_complementario || '').toLowerCase().includes(q)       ||
       (c.total_amount != null && String(c.total_amount).includes(q))
     )
   }
@@ -212,7 +214,7 @@ export default function Cases() {
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
           <input
             type="text"
-            placeholder="Paciente, boleta, título, monto, RUT, proveedor…"
+            placeholder="Paciente, boleta, título, monto, RUT, proveedor, N° Banmédica/Complementario…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="input pl-9"

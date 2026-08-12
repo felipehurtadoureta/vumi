@@ -108,6 +108,8 @@ export default function CaseDetail() {
     total_amount: '',
     rut_centro_medico: '',
     rut_medico: '',
+    numero_banmedica: '',
+    numero_complementario: '',
   })
   const [savingFields, setSavingFields] = useState(false)
 
@@ -157,6 +159,8 @@ export default function CaseDetail() {
         total_amount:      c.total_amount != null ? String(c.total_amount) : '',
         rut_centro_medico: c.rut_centro_medico ?? '',
         rut_medico:        c.rut_medico        ?? '',
+        numero_banmedica:      c.numero_banmedica      ?? '',
+        numero_complementario: c.numero_complementario ?? '',
       })
     }
     if (docsRes.data) {
@@ -408,6 +412,8 @@ export default function CaseDetail() {
       total_amount:      fields.total_amount ? parseFloat(fields.total_amount) : null,
       rut_centro_medico: fields.rut_centro_medico || null,
       rut_medico:        fields.rut_medico        || null,
+      numero_banmedica:      fields.numero_banmedica      || null,
+      numero_complementario: fields.numero_complementario || null,
     }).eq('id', id)
 
     // Registrar correcciones respecto al OCR (para mejorar patrones futuros)
@@ -423,6 +429,7 @@ export default function CaseDetail() {
       const corrections: object[] = []
       for (const [field, userVal] of Object.entries(fields)) {
         if (!userVal) continue
+        if (!(field in ocrValues)) continue  // campos de llenado manual (sin contraparte OCR)
         const ocrVal = ocrValues[field]
         if (userVal === ocrVal) continue  // coincide con OCR, sin corrección
         corrections.push({ document_id: boletaDoc.id, case_id: id, field_name: field, ocr_value: ocrVal, corrected_value: userVal })
@@ -1417,10 +1424,16 @@ Felipe Hurtado`
                 value={fields.rut_centro_medico} display={caseData.rut_centro_medico ?? '—'}
                 hint={hint('rut_centro_medico')}
                 onChange={(v) => setFields((f) => ({ ...f, rut_centro_medico: v }))} />
-              <Field label="RUT médico" edit={editMode} className="col-span-2"
+              <Field label="RUT médico" edit={editMode}
                 value={fields.rut_medico} display={caseData.rut_medico ?? '—'}
                 hint={hint('rut_medico')}
                 onChange={(v) => setFields((f) => ({ ...f, rut_medico: v }))} />
+              <Field label="N° Banmédica" edit={editMode}
+                value={fields.numero_banmedica} display={caseData.numero_banmedica ?? '—'}
+                onChange={(v) => setFields((f) => ({ ...f, numero_banmedica: v }))} />
+              <Field label="N° Complementario" edit={editMode}
+                value={fields.numero_complementario} display={caseData.numero_complementario ?? '—'}
+                onChange={(v) => setFields((f) => ({ ...f, numero_complementario: v }))} />
             </div>
           )
         })()}
