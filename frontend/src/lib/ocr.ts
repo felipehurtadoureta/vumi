@@ -568,12 +568,16 @@ function parseVisionJSON(raw: string): OCRResult | null {
   }
 }
 
-// OpenRouter — modelos de visión gratuitos (Gemini 2.0 Flash, Llama Vision, etc.)
-// Crear cuenta gratis en openrouter.ai — sin tarjeta de crédito para modelos ":free"
+// OpenRouter — modelos de visión gratuitos.
+// IMPORTANTE: OpenRouter retira y renombra sus modelos ":free" con frecuencia.
+// Verificado contra https://openrouter.ai/api/v1/models el 26-08-2026 — estos 3
+// son los únicos modelos gratuitos con soporte de imagen disponibles ese día.
+// Si el OCR de fotos vuelve a fallar en el futuro, primero revisar esa lista
+// (buscar "modality":"text+image->text" o similar) y actualizar aquí.
 const OPENROUTER_MODELS = [
-  'google/gemma-4-31b-it:free',
-  'nvidia/nemotron-nano-12b-v2-vl:free',
-  'google/gemma-4-26b-a4b-it:free',
+  'thinkingmachines/inkling:free',
+  'thinkingmachines/inkling-small:free',
+  'dots-studio/dots-3-note-preview:free',
 ]
 
 async function extractViaOpenRouter(buffer: ArrayBuffer, mimeType: string): Promise<OCRResult | null> {
@@ -637,6 +641,7 @@ async function extractViaOpenRouter(buffer: ArrayBuffer, mimeType: string): Prom
 
 // Gemini directo — intenta múltiples modelos con timeout
 const GEMINI_MODELS = [
+  'gemini-2.5-flash',
   'gemini-2.0-flash',
   'gemini-2.0-flash-001',
   'gemini-1.5-flash',
