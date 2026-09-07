@@ -570,6 +570,7 @@ export default function CaseDetail() {
 Adjunto documentos para reembolso
 
 Nombre: ${patientName}
+Prestación: ${caseData.title ?? '—'}
 Boleta: ${caseData.boleta_number ?? '—'}
 Fecha Prestación: ${fechaPrestacion}
 Monto: ${amount}
