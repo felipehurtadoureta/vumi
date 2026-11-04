@@ -75,19 +75,44 @@ function parseOrderText(raw: string): { medicamentos: string[]; texto: string } 
   return { medicamentos, texto }
 }
 
-interface VisionImage { base64: string; mime: string; dataUrl: string }
+interface VisionImage { base64: string; mime: string; dataUrl: string; note?: string }
+
+function toBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer)
+  const chunks: string[] = []
+  for (let i = 0; i < bytes.length; i += 8192) chunks.push(String.fromCharCode(...bytes.subarray(i, i + 8192)))
+  return btoa(chunks.join(''))
+}
 
 async function prepareImage(buffer: ArrayBuffer, mimeType: string): Promise<VisionImage> {
-  // El navegador no sabe abrir HEIC: se manda el archivo tal cual (solo Gemini lo acepta).
+  // Formatos que el navegador no puede abrir para convertir (HEIC) se envían tal cual:
+  // solo Gemini los acepta.
   if (mimeType === 'image/heic' || mimeType === 'image/heif') {
-    const bytes = new Uint8Array(buffer)
-    const chunks: string[] = []
-    for (let i = 0; i < bytes.length; i += 8192) chunks.push(String.fromCharCode(...bytes.subarray(i, i + 8192)))
-    const base64 = btoa(chunks.join(''))
-    return { base64, mime: mimeType, dataUrl: '' }
+    return { base64: toBase64(buffer), mime: mimeType, dataUrl: '' }
   }
-  const dataUrl = await prepareImageDataUrl(buffer, mimeType)
-  return { base64: dataUrl.split(',')[1], mime: 'image/jpeg', dataUrl }
+
+  if (mimeType === 'application/pdf') {
+    try {
+      // slice(0): PDF.js "consume" el buffer y lo necesitamos intacto para el respaldo
+      const dataUrl = await prepareImageDataUrl(buffer.slice(0), mimeType)
+      return { base64: dataUrl.split(',')[1], mime: 'image/jpeg', dataUrl }
+    } catch (e: any) {
+      // Respaldo: Gemini lee el PDF completo directamente, sin convertirlo a imagen
+      return {
+        base64: toBase64(buffer),
+        mime: 'application/pdf',
+        dataUrl: '',
+        note: `No se pudo convertir el PDF a imagen (${e?.message ?? 'error'})`,
+      }
+    }
+  }
+
+  try {
+    const dataUrl = await prepareImageDataUrl(buffer, mimeType)
+    return { base64: dataUrl.split(',')[1], mime: 'image/jpeg', dataUrl }
+  } catch (e: any) {
+    throw new Error(`No se pudo preparar la imagen (${mimeType}): ${e?.message ?? 'error'}`)
+  }
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit, ms: number) {
@@ -101,7 +126,7 @@ async function fetchWithTimeout(url: string, init: RequestInit, ms: number) {
 async function visionViaOpenRouter(img: VisionImage, log: string[]): Promise<string | null> {
   const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY
   if (!apiKey) { log.push('OpenRouter: sin clave'); return null }
-  if (!img.dataUrl) { log.push('OpenRouter: no acepta HEIC'); return null }
+  if (!img.dataUrl) return null // HEIC / PDF sin convertir: solo Gemini
   for (const model of OPENROUTER_MODELS) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
@@ -186,14 +211,8 @@ export async function transcribeOrder(buffer: ArrayBuffer, mimeType: string): Pr
     }
   }
 
-  let img: VisionImage
-  try {
-    img = await prepareImage(buffer, mimeType)
-  } catch {
-    throw new Error(`No se pudo preparar la imagen (${mimeType})`)
-  }
-
-  const log: string[] = []
+  const img = await prepareImage(buffer, mimeType)
+  const log: string[] = img.note ? [img.note] : []
   // HEIC solo lo acepta Gemini; para el resto, OpenRouter primero
   const raw = img.dataUrl
     ? (await visionViaOpenRouter(img, log)) ?? (await visionViaGemini(img, log))
