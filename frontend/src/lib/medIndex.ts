@@ -28,104 +28,149 @@ export interface MedIndex {
 }
 
 const MAX_TEXT = 6000
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-const ORDER_PROMPT = `Transcribe esta orden médica o receta chilena. Responde SOLO con JSON válido (sin markdown):
-{
-  "medicamentos": ["<cada fármaco tal como aparece: nombre comercial y/o genérico, con dosis si figura>"],
-  "texto": "<transcripción de todo el texto legible del documento, en orden>"
-}
+// Formato de texto plano (no JSON): los modelos gratuitos rompen el JSON con
+// frecuencia al transcribir textos largos con comillas o saltos de línea.
+const ORDER_PROMPT = `Transcribe esta orden médica o receta chilena usando EXACTAMENTE este formato:
+
+MEDICAMENTOS:
+- <fármaco tal como aparece: nombre comercial y/o genérico, con dosis si figura>
+- <otro fármaco>
+
+TEXTO:
+<todo el texto legible del documento, en orden>
+
 REGLAS:
 - No inventes ni completes nombres. Si una palabra no se lee, escribe [ilegible].
-- Si el documento no indica medicamentos (por ejemplo, una orden de examen), deja "medicamentos" como [].
-- Incluye en "texto" también exámenes, indicaciones y el nombre del médico si aparecen.`
+- Si el documento no indica medicamentos (por ejemplo, una orden de examen), escribe "- ninguno" bajo MEDICAMENTOS.
+- No agregues comentarios ni explicaciones fuera de ese formato.`
 
 /** Minúsculas y sin tildes, para comparar "Clotiazepám" con "clotiazepam". */
 export function normalize(s: string): string {
   return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
 }
 
-function parseOrderJSON(raw: string): { medicamentos: string[]; texto: string } | null {
-  try {
-    const jsonStr = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
-    const start = jsonStr.indexOf('{')
-    const end = jsonStr.lastIndexOf('}')
-    const p = JSON.parse(jsonStr.slice(start, end + 1))
-    const meds = Array.isArray(p.medicamentos)
-      ? p.medicamentos.map((m: unknown) => String(m).trim()).filter(Boolean)
-      : []
-    return { medicamentos: meds, texto: String(p.texto ?? '').trim() }
-  } catch {
-    return null
+/** Interpreta la respuesta con tolerancia: si no viene el formato, guarda todo como texto. */
+function parseOrderText(raw: string): { medicamentos: string[]; texto: string } | null {
+  const clean = raw.replace(/```[a-z]*\n?/gi, '').trim()
+  if (clean.length < 5) return null
+
+  // Por si algún modelo responde igual en JSON
+  if (clean.startsWith('{')) {
+    try {
+      const p = JSON.parse(clean)
+      const meds = Array.isArray(p.medicamentos) ? p.medicamentos.map((m: unknown) => String(m).trim()).filter(Boolean) : []
+      return { medicamentos: meds, texto: String(p.texto ?? clean) }
+    } catch { /* sigue como texto */ }
   }
+
+  const medsMatch = clean.match(/MEDICAMENTOS\s*:?\s*\n([\s\S]*?)(?:\n\s*TEXTO\s*:|$)/i)
+  const textMatch = clean.match(/TEXTO\s*:?\s*\n?([\s\S]*)$/i)
+  const medicamentos = (medsMatch?.[1] ?? '')
+    .split('\n')
+    .map((l) => l.replace(/^\s*[-•*\d.)]+\s*/, '').trim())
+    .filter((l) => l && !/^ninguno\.?$/i.test(l) && !/^\[?ilegible\]?$/i.test(l))
+  const texto = (textMatch?.[1] ?? clean).trim()
+  return { medicamentos, texto }
 }
 
-async function visionViaOpenRouter(dataUrl: string): Promise<string | null> {
+interface VisionImage { base64: string; mime: string; dataUrl: string }
+
+async function prepareImage(buffer: ArrayBuffer, mimeType: string): Promise<VisionImage> {
+  // El navegador no sabe abrir HEIC: se manda el archivo tal cual (solo Gemini lo acepta).
+  if (mimeType === 'image/heic' || mimeType === 'image/heif') {
+    const bytes = new Uint8Array(buffer)
+    const chunks: string[] = []
+    for (let i = 0; i < bytes.length; i += 8192) chunks.push(String.fromCharCode(...bytes.subarray(i, i + 8192)))
+    const base64 = btoa(chunks.join(''))
+    return { base64, mime: mimeType, dataUrl: '' }
+  }
+  const dataUrl = await prepareImageDataUrl(buffer, mimeType)
+  return { base64: dataUrl.split(',')[1], mime: 'image/jpeg', dataUrl }
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit, ms: number) {
+  const controller = new AbortController()
+  const t = setTimeout(() => controller.abort(), ms)
+  try { return await fetch(url, { ...init, signal: controller.signal }) }
+  finally { clearTimeout(t) }
+}
+
+/** Devuelve la respuesta del modelo, o null; anota en `log` por qué falló cada intento. */
+async function visionViaOpenRouter(img: VisionImage, log: string[]): Promise<string | null> {
   const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY
-  if (!apiKey) return null
+  if (!apiKey) { log.push('OpenRouter: sin clave'); return null }
+  if (!img.dataUrl) { log.push('OpenRouter: no acepta HEIC'); return null }
   for (const model of OPENROUTER_MODELS) {
-    try {
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), 45_000)
-      const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        signal: controller.signal,
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-          'HTTP-Referer': 'https://vumi.app',
-          'X-Title': 'Vumi Reembolsos',
-        },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: 'user', content: [
-            { type: 'image_url', image_url: { url: dataUrl } },
-            { type: 'text', text: ORDER_PROMPT },
-          ]}],
-          temperature: 0,
-        }),
-      })
-      clearTimeout(timeout)
-      if (!resp.ok) continue
-      const data = await resp.json()
-      const raw: string = data.choices?.[0]?.message?.content ?? ''
-      if (parseOrderJSON(raw)) return raw
-    } catch (e) {
-      console.warn(`[MedIndex] ${model} falló:`, e)
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const resp = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+            'HTTP-Referer': 'https://vumi.app',
+            'X-Title': 'Vumi Reembolsos',
+          },
+          body: JSON.stringify({
+            model,
+            messages: [{ role: 'user', content: [
+              { type: 'image_url', image_url: { url: img.dataUrl } },
+              { type: 'text', text: ORDER_PROMPT },
+            ]}],
+            temperature: 0,
+          }),
+        }, 30_000)
+        if (resp.status === 429 && attempt === 0) { await sleep(5_000); continue }
+        if (!resp.ok) { log.push(`${model}: HTTP ${resp.status}`); break }
+        const data = await resp.json()
+        const raw: string = data.choices?.[0]?.message?.content ?? ''
+        if (parseOrderText(raw)) return raw
+        log.push(`${model}: respuesta vacía`)
+        break
+      } catch (e: any) {
+        log.push(`${model}: ${e?.name === 'AbortError' ? 'sin respuesta en 30 s' : e?.message ?? 'error'}`)
+        break
+      }
     }
   }
   return null
 }
 
-async function visionViaGemini(dataUrl: string): Promise<string | null> {
+async function visionViaGemini(img: VisionImage, log: string[]): Promise<string | null> {
   const key = import.meta.env.VITE_GEMINI_API_KEY
-  if (!key) return null
-  const base64 = dataUrl.split(',')[1]
+  if (!key) { log.push('Gemini: sin clave'); return null }
   for (const model of GEMINI_MODELS) {
-    try {
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), 40_000)
-      const resp = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
-        {
-          method: 'POST',
-          signal: controller.signal,
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [
-              { text: ORDER_PROMPT },
-              { inline_data: { mime_type: 'image/jpeg', data: base64 } },
-            ]}],
-            generationConfig: { temperature: 0 },
-          }),
-        },
-      )
-      clearTimeout(timeout)
-      if (!resp.ok) continue
-      const data = await resp.json()
-      const raw: string = data.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
-      if (parseOrderJSON(raw)) return raw
-    } catch (e) {
-      console.warn(`[MedIndex] Gemini ${model} falló:`, e)
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const resp = await fetchWithTimeout(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [
+                { text: ORDER_PROMPT },
+                { inline_data: { mime_type: img.mime, data: img.base64 } },
+              ]}],
+              generationConfig: { temperature: 0 },
+            }),
+          },
+          30_000,
+        )
+        if (resp.status === 429 && attempt === 0) { await sleep(5_000); continue }
+        if (resp.status === 404) break // modelo retirado: probar el siguiente sin anotar
+        if (!resp.ok) { log.push(`${model}: HTTP ${resp.status}`); break }
+        const data = await resp.json()
+        const raw: string = data.candidates?.[0]?.content?.parts?.map((p: any) => p.text ?? '').join('') ?? ''
+        if (parseOrderText(raw)) return raw
+        log.push(`${model}: respuesta vacía`)
+        break
+      } catch (e: any) {
+        log.push(`${model}: ${e?.name === 'AbortError' ? 'sin respuesta en 30 s' : e?.message ?? 'error'}`)
+        break
+      }
     }
   }
   return null
@@ -141,12 +186,20 @@ export async function transcribeOrder(buffer: ArrayBuffer, mimeType: string): Pr
     }
   }
 
-  const dataUrl = await prepareImageDataUrl(buffer, mimeType)
-  const raw = (await visionViaOpenRouter(dataUrl)) ?? (await visionViaGemini(dataUrl))
-  const parsed = raw ? parseOrderJSON(raw) : null
-  if (!parsed) {
-    throw new Error('No se pudo leer el documento (revisa VITE_OPENROUTER_API_KEY / VITE_GEMINI_API_KEY)')
+  let img: VisionImage
+  try {
+    img = await prepareImage(buffer, mimeType)
+  } catch {
+    throw new Error(`No se pudo preparar la imagen (${mimeType})`)
   }
+
+  const log: string[] = []
+  // HEIC solo lo acepta Gemini; para el resto, OpenRouter primero
+  const raw = img.dataUrl
+    ? (await visionViaOpenRouter(img, log)) ?? (await visionViaGemini(img, log))
+    : (await visionViaGemini(img, log))
+  const parsed = raw ? parseOrderText(raw) : null
+  if (!parsed) throw new Error(log.join(' · ') || 'Ningún modelo pudo leer el documento')
   return {
     medicamentos: parsed.medicamentos,
     texto_indexado: parsed.texto.slice(0, MAX_TEXT),

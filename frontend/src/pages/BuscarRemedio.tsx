@@ -126,6 +126,7 @@ export default function BuscarRemedio() {
   const [progress, setProgress] = useState({ done: 0, total: 0 })
   const cancelRef = useRef(false)
   const [rowBusy, setRowBusy] = useState<string | null>(null)
+  const [showFailed, setShowFailed] = useState(false)
 
   // Visor
   const [viewer, setViewer] = useState<{ url: string; name: string; pdf: boolean } | null>(null)
@@ -212,6 +213,8 @@ export default function BuscarRemedio() {
       const meta = await indexDocument(list[i])
       patchDoc(list[i].id, meta)
       setProgress({ done: i + 1, total: list.length })
+      // Pausa corta para no chocar con el límite de uso de los modelos gratuitos
+      if (i < list.length - 1) await new Promise((r) => setTimeout(r, 1500))
     }
     setIndexing(false)
   }
@@ -295,7 +298,7 @@ export default function BuscarRemedio() {
               ? <>Leyendo órdenes… {progress.done} de {progress.total}</>
               : <>
                   {pending.length} de {docs.length} órdenes todavía no se han leído, así que la búsqueda no las encuentra por su contenido.
-                  {failed.length > 0 && <> ({failed.length} con error de lectura)</>}
+                  {failed.length > 0 && <> ({failed.length} con error de lectura — <button onClick={() => setShowFailed((v) => !v)} className="underline">{showFailed ? 'ocultar' : 'ver cuáles'}</button>)</>}
                 </>}
           </div>
           {indexing
@@ -303,6 +306,31 @@ export default function BuscarRemedio() {
             : <button onClick={indexPending} className="px-3 py-1.5 rounded-lg bg-amber-600 text-white hover:bg-amber-700 flex items-center gap-1.5">
                 <RefreshCw size={14} /> Leer órdenes pendientes
               </button>}
+        </div>
+      )}
+
+      {/* Órdenes con error de lectura */}
+      {showFailed && failed.length > 0 && (
+        <div className="rounded-lg border border-gray-200 bg-white divide-y divide-gray-100">
+          {failed.map((doc) => (
+            <div key={doc.id} className="p-3 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm text-gray-900 truncate">{doc.original_name}</div>
+                <div className="text-xs text-gray-500">
+                  {[...new Set(doc.cases.map((c) => c.patientName).filter(Boolean))].join(', ')}
+                  {doc.cases[0]?.title && <> · {doc.cases[0].title}</>}
+                </div>
+                <div className="text-[11px] text-red-600 mt-0.5 break-words">{metaOf(doc).indice_error}</div>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <button onClick={() => view(doc)} title="Ver archivo" className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100"><Eye size={15} /></button>
+                <button onClick={() => openEdit(doc)} title="Escribir remedios a mano" className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100"><Pencil size={15} /></button>
+                <button onClick={() => reindexOne(doc)} disabled={rowBusy === doc.id} title="Reintentar" className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 disabled:opacity-50">
+                  <RefreshCw size={15} className={clsx(rowBusy === doc.id && 'animate-spin')} />
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
