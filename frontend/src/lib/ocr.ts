@@ -49,7 +49,7 @@ async function extractTextFromPDFRaw(buffer: ArrayBuffer): Promise<string> {
 // de PDF.js falla en cargarse o se cuelga (visto de forma intermitente),
 // esto evita que el análisis se quede "pensando" indefinidamente — en vez
 // de eso, cae rápido al respaldo de Vision IA.
-async function extractTextFromPDF(buffer: ArrayBuffer): Promise<string> {
+export async function extractTextFromPDF(buffer: ArrayBuffer): Promise<string> {
   try {
     return await Promise.race([
       extractTextFromPDFRaw(buffer),
@@ -485,7 +485,7 @@ async function pdfPageToDataUrl(buf: ArrayBuffer): Promise<string> {
 }
 
 // Prepara imagen o PDF para enviar a Vision IA (redimensiona si hace falta)
-async function prepareImageDataUrl(buf: ArrayBuffer, mimeType: string): Promise<string> {
+export async function prepareImageDataUrl(buf: ArrayBuffer, mimeType: string): Promise<string> {
   if (mimeType === 'application/pdf') {
     // Siempre renderizar la página completa via pdfjs.
     // NO usar extractJpegFromPdf: muchas boletas tienen imágenes embebidas (ej: Timbre SII/barcode)
@@ -574,7 +574,7 @@ function parseVisionJSON(raw: string): OCRResult | null {
 // son los únicos modelos gratuitos con soporte de imagen disponibles ese día.
 // Si el OCR de fotos vuelve a fallar en el futuro, primero revisar esa lista
 // (buscar "modality":"text+image->text" o similar) y actualizar aquí.
-const OPENROUTER_MODELS = [
+export const OPENROUTER_MODELS = [
   'thinkingmachines/inkling:free',
   'thinkingmachines/inkling-small:free',
   'dots-studio/dots-3-note-preview:free',
@@ -640,7 +640,7 @@ async function extractViaOpenRouter(buffer: ArrayBuffer, mimeType: string): Prom
 }
 
 // Gemini directo — intenta múltiples modelos con timeout
-const GEMINI_MODELS = [
+export const GEMINI_MODELS = [
   'gemini-2.5-flash',
   'gemini-2.0-flash',
   'gemini-2.0-flash-001',

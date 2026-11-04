@@ -1,6 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import {
-  LayoutDashboard, FolderOpen, BarChart2, Users, LogOut, Trash2, Library, Layers, HeartPulse,
+  LayoutDashboard, FolderOpen, BarChart2, Users, LogOut, Trash2, Library, Layers, HeartPulse, Pill,
 } from 'lucide-react'
 import { signOut } from '@/lib/supabase'
 import clsx from 'clsx'
@@ -9,6 +9,7 @@ const nav = [
   { to: '/',            icon: LayoutDashboard, label: 'Inicio'          },
   { to: '/cases',       icon: FolderOpen,      label: 'Casos'           },
   { to: '/documents',   icon: Library,         label: 'Documentos'      },
+  { to: '/buscar-remedio', icon: Pill,         label: 'Buscar remedio'  },
   { to: '/resumen',     icon: BarChart2,       label: 'Resumen'         },
   { to: '/patients',    icon: Users,           label: 'Pacientes'       },
   { to: '/unir-pdf',    icon: Layers,          label: 'Unir PDF'        },

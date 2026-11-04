@@ -10,6 +10,7 @@ import { uploadToDrive, deleteFromDrive, getAccessToken, isDriveAvailable, drive
 import { supabase } from '@/lib/supabase'
 import { useStore } from '@/store/useStore'
 import { processDocument } from '@/lib/ocr'
+import { indexDocument } from '@/lib/medIndex'
 import StatusBadge from '@/components/ui/StatusBadge'
 import type { MedicalCase, CaseDocument, DocumentType, Patient } from '@/lib/types'
 import { DOC_TYPE_LABELS } from '@/lib/types'
@@ -309,6 +310,13 @@ export default function CaseDetail() {
             await loadCase()
           })
           .catch(e => console.error('[Drive] upload falló:', e.message))
+      }
+
+      // 6a. Órdenes y recetas: leerlas en segundo plano para el buscador de remedios
+      //     (solo escribe en extracted_metadata; no afecta el flujo de reembolso)
+      if (docType === 'orden_medica' || docType === 'otro') {
+        indexDocument({ ...doc, extracted_metadata: doc.extracted_metadata ?? null })
+          .catch(e => console.warn('[MedIndex] indexado en segundo plano falló:', e?.message))
       }
 
       // 6. OCR solo para boletas (órdenes y liquidaciones no necesitan extracción)

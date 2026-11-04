@@ -14,6 +14,7 @@ import Patients from '@/pages/Patients'
 import Documents from '@/pages/Documents'
 import Upload from '@/pages/Upload'
 import MergePdf from '@/pages/MergePdf'
+import BuscarRemedio from '@/pages/BuscarRemedio'
 import HojaDeVidaPacientes from '@/hoja-de-vida/pages/Pacientes'
 import Historial from '@/hoja-de-vida/pages/Historial'
 import SubirInforme from '@/hoja-de-vida/pages/SubirInforme'
@@ -76,6 +77,7 @@ export default function App() {
           <Route path="documents" element={<Documents />} />
           <Route path="upload" element={<Upload />} />
           <Route path="unir-pdf" element={<MergePdf />} />
+          <Route path="buscar-remedio" element={<BuscarRemedio />} />
           <Route path="hoja-de-vida" element={<HojaDeVidaPacientes />} />
           <Route path="hoja-de-vida/tendencias" element={<Tendencias />} />
           <Route path="hoja-de-vida/tendencias/:patientId" element={<Tendencias />} />
