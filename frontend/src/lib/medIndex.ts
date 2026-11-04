@@ -122,12 +122,61 @@ async function fetchWithTimeout(url: string, init: RequestInit, ms: number) {
   finally { clearTimeout(t) }
 }
 
+// Los modelos gratuitos se retiran y renombran seguido (de ahí los HTTP 404), así que
+// en vez de confiar en una lista fija se consulta cuáles están vigentes. Si la consulta
+// falla se usan las listas fijas de ocr.ts.
+let orModelsCache: string[] | null = null
+let geminiModelsCache: string[] | null = null
+
+async function discoverOpenRouterModels(): Promise<string[]> {
+  if (orModelsCache) return orModelsCache
+  try {
+    const resp = await fetchWithTimeout('https://openrouter.ai/api/v1/models', {}, 15_000)
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    const data = await resp.json()
+    const found: string[] = (data.data ?? [])
+      .filter((m: any) => typeof m.id === 'string' && m.id.endsWith(':free'))
+      .filter((m: any) => (m.architecture?.input_modalities ?? []).includes('image')
+        || String(m.architecture?.modality ?? '').split('->')[0].includes('image'))
+      .map((m: any) => m.id)
+    orModelsCache = found.length ? found.slice(0, 5) : [...OPENROUTER_MODELS]
+  } catch {
+    orModelsCache = [...OPENROUTER_MODELS]
+  }
+  return orModelsCache
+}
+
+async function discoverGeminiModels(key: string): Promise<string[]> {
+  if (geminiModelsCache) return geminiModelsCache
+  try {
+    const resp = await fetchWithTimeout(
+      `https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=${key}`, {}, 15_000)
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    const data = await resp.json()
+    const names: string[] = (data.models ?? [])
+      .filter((m: any) => (m.supportedGenerationMethods ?? []).includes('generateContent'))
+      .map((m: any) => String(m.name).replace(/^models\//, ''))
+      .filter((n: string) => /^gemini-/.test(n) && /flash/.test(n) && !/(image|tts|live|audio|thinking|exp|robotics|computer|embedding)/.test(n))
+    const version = (n: string) => parseFloat(n.match(/^gemini-(\d+(?:\.\d+)?)/)?.[1] ?? '0')
+    const stable = (n: string) => !/(preview|latest)/.test(n)
+    // Más nuevos primero; estables antes que previews; "flash" completo antes que "lite"
+    names.sort((a, b) =>
+      version(b) - version(a) || Number(stable(b)) - Number(stable(a)) ||
+      Number(/lite/.test(a)) - Number(/lite/.test(b)))
+    geminiModelsCache = names.length ? names.slice(0, 4) : [...GEMINI_MODELS]
+  } catch {
+    geminiModelsCache = [...GEMINI_MODELS]
+  }
+  return geminiModelsCache
+}
+
 /** Devuelve la respuesta del modelo, o null; anota en `log` por qué falló cada intento. */
 async function visionViaOpenRouter(img: VisionImage, log: string[]): Promise<string | null> {
   const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY
   if (!apiKey) { log.push('OpenRouter: sin clave'); return null }
   if (!img.dataUrl) return null // HEIC / PDF sin convertir: solo Gemini
-  for (const model of OPENROUTER_MODELS) {
+  const models = await discoverOpenRouterModels()
+  for (const model of models) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const resp = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
@@ -147,7 +196,7 @@ async function visionViaOpenRouter(img: VisionImage, log: string[]): Promise<str
             temperature: 0,
           }),
         }, 30_000)
-        if (resp.status === 429 && attempt === 0) { await sleep(5_000); continue }
+        if (resp.status === 429 && attempt === 0) { await sleep(8_000); continue }
         if (!resp.ok) { log.push(`${model}: HTTP ${resp.status}`); break }
         const data = await resp.json()
         const raw: string = data.choices?.[0]?.message?.content ?? ''
@@ -166,7 +215,8 @@ async function visionViaOpenRouter(img: VisionImage, log: string[]): Promise<str
 async function visionViaGemini(img: VisionImage, log: string[]): Promise<string | null> {
   const key = import.meta.env.VITE_GEMINI_API_KEY
   if (!key) { log.push('Gemini: sin clave'); return null }
-  for (const model of GEMINI_MODELS) {
+  const models = await discoverGeminiModels(key)
+  for (const model of models) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const resp = await fetchWithTimeout(
@@ -184,8 +234,7 @@ async function visionViaGemini(img: VisionImage, log: string[]): Promise<string 
           },
           30_000,
         )
-        if (resp.status === 429 && attempt === 0) { await sleep(5_000); continue }
-        if (resp.status === 404) break // modelo retirado: probar el siguiente sin anotar
+        if (resp.status === 429 && attempt === 0) { await sleep(8_000); continue }
         if (!resp.ok) { log.push(`${model}: HTTP ${resp.status}`); break }
         const data = await resp.json()
         const raw: string = data.candidates?.[0]?.content?.parts?.map((p: any) => p.text ?? '').join('') ?? ''
