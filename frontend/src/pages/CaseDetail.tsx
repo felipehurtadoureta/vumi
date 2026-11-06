@@ -41,6 +41,14 @@ function parseLocalDate(iso: string): Date {
   return new Date(y, m - 1, d)
 }
 
+// Fecha de hoy en hora local (YYYY-MM-DD), para precargar los calendarios.
+// No usar toISOString(): devuelve UTC y en la tarde/noche de Chile cae en el día siguiente.
+function todayLocal() {
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
 function fmtDate(iso: string | null) {
   if (!iso) return '—'
   // Siempre parsear como fecha local (tomar solo YYYY-MM-DD) para evitar desfase UTC→Chile
@@ -115,8 +123,8 @@ export default function CaseDetail() {
   const [savingFields, setSavingFields] = useState(false)
 
   // reimbursement date inputs
-  const [banmedicaDate, setBanmedicaDate] = useState('')
-  const [metlifeDate, setMetlifeDate]     = useState('')
+  const [banmedicaDate, setBanmedicaDate] = useState(todayLocal)
+  const [metlifeDate, setMetlifeDate]     = useState(todayLocal)
   const [savingStep, setSavingStep] = useState<string | null>(null)
   const [sendingVumi, setSendingVumi] = useState(false)
   const [vumiConfirmOpen, setVumiConfirmOpen] = useState(false)
@@ -468,7 +476,7 @@ export default function CaseDetail() {
     if (!id || !banmedicaDate) return
     setSavingStep('banmedica')
     await supabase.from('medical_cases').update({ banmedica_sent_at: banmedicaDate }).eq('id', id)
-    setBanmedicaDate('')
+    setBanmedicaDate(todayLocal())
     setSavingStep(null)
     await loadCase()
   }
@@ -477,7 +485,7 @@ export default function CaseDetail() {
     if (!id || !metlifeDate) return
     setSavingStep('metlife')
     await supabase.from('medical_cases').update({ metlife_sent_at: metlifeDate }).eq('id', id)
-    setMetlifeDate('')
+    setMetlifeDate(todayLocal())
     setSavingStep(null)
     await loadCase()
   }
