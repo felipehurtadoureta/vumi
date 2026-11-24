@@ -650,7 +650,7 @@ async function extractViaOpenRouter(buffer: ArrayBuffer, mimeType: string): Prom
     try {
       console.log(`[OCR] Intentando modelo: ${model}`)
       const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), 30_000)
+      const timeout = setTimeout(() => controller.abort(), 20_000)
 
       const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
@@ -689,7 +689,7 @@ async function extractViaOpenRouter(buffer: ArrayBuffer, mimeType: string): Prom
       if (result) { console.log('[OCR] JSON parseado OK'); return result }
       console.warn('[OCR] JSON no parseable:', raw.slice(0, 200))
     } catch (e: any) {
-      if (e?.name === 'AbortError') console.warn(`[OCR] ${model} timeout (30s)`)
+      if (e?.name === 'AbortError') console.warn(`[OCR] ${model} timeout (20s)`)
       else console.warn(`[OCR] ${model} error:`, e)
     }
   }
@@ -760,7 +760,7 @@ async function callGemini(
   { sinThinking = false } = {},
 ): Promise<OCRResult | null> {
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 30_000)
+  const timeout = setTimeout(() => controller.abort(), 20_000)
   const thinking = sinThinking ? null : thinkingConfigFor(model)
   try {
     console.log(`[OCR] Intentando Gemini modelo: ${model}`)
@@ -803,37 +803,30 @@ async function callGemini(
     return null
   } catch (e: any) {
     clearTimeout(timeout)
-    if (e?.name === 'AbortError') console.warn(`[OCR] Gemini ${model} timeout (30s)`)
+    if (e?.name === 'AbortError') console.warn(`[OCR] Gemini ${model} timeout (20s)`)
     else console.warn(`[OCR] Gemini ${model} error:`, e)
     return null
   }
 }
 
-/** Lanza varios modelos a la vez y se queda con el primero que responda bien. */
-async function carreraGemini(
+/**
+ * Prueba los modelos uno tras otro y devuelve el primero que responda bien.
+ *
+ * Se intentó lanzarlos en paralelo y salió peor: el nivel gratuito de Gemini
+ * encola las llamadas simultáneas, así que tres a la vez se pasaron los 30 s
+ * las tres, cuando en fila el mismo modelo respondía en 24 s.
+ */
+async function intentarGeminiEnFila(
   models: string[], apiKey: string, base64: string, sendMime: string,
 ): Promise<OCRResult | null> {
-  if (models.length === 0) return null
-  // Promise.any pediría lib ES2021 en tsconfig; esto hace lo mismo sin tocarlo.
-  return await new Promise<OCRResult | null>(resolve => {
-    let pendientes = models.length
-    let resuelto = false
-    for (const m of models) {
-      callGemini(m, apiKey, base64, sendMime)
-        .then(r => {
-          if (r && !resuelto) {
-            resuelto = true
-            try { localStorage.setItem(GEMINI_WINNER_KEY, m) } catch { /* modo privado */ }
-            resolve(r)
-          }
-        })
-        .catch(() => { /* ya se registra dentro de callGemini */ })
-        .then(() => {
-          pendientes -= 1
-          if (pendientes === 0 && !resuelto) resolve(null)
-        })
+  for (const m of models) {
+    const r = await callGemini(m, apiKey, base64, sendMime)
+    if (r) {
+      try { localStorage.setItem(GEMINI_WINNER_KEY, m) } catch { /* modo privado */ }
+      return r
     }
-  })
+  }
+  return null
 }
 
 async function extractViaGemini(buffer: ArrayBuffer, mimeType: string): Promise<OCRResult | null> {
@@ -859,10 +852,8 @@ async function extractViaGemini(buffer: ArrayBuffer, mimeType: string): Promise<
     console.warn(`[OCR] ${ganador} falló esta vez — probando el resto en paralelo`)
   }
 
-  // En paralelo, no en fila: los modelos nuevos a veces tardan o devuelven 503,
-  // y encadenarlos agota el tiempo total antes de llegar a uno que responda.
-  const resto = candidatos.filter(m => m !== ganador).slice(0, 3)
-  const r = await carreraGemini(resto, geminiKey, base64, sendMime)
+  const resto = candidatos.filter(m => m !== ganador).slice(0, 2)
+  const r = await intentarGeminiEnFila(resto, geminiKey, base64, sendMime)
   if (r) return r
 
   console.warn('[OCR] Todos los modelos Gemini fallaron')
