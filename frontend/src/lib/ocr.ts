@@ -852,7 +852,7 @@ async function extractViaGemini(buffer: ArrayBuffer, mimeType: string): Promise<
     console.warn(`[OCR] ${ganador} falló esta vez — probando el resto en paralelo`)
   }
 
-  const resto = candidatos.filter(m => m !== ganador).slice(0, 2)
+  const resto = candidatos.filter(m => m !== ganador).slice(0, 3)
   const r = await intentarGeminiEnFila(resto, geminiKey, base64, sendMime)
   if (r) return r
 
