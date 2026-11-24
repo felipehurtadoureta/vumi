@@ -509,6 +509,18 @@ export default function NewCase() {
           </div>
         )}
 
+        {/* La IA no devolvió nada: lo decimos en vez de dejar el formulario en blanco */}
+        {!ocr && (
+          <div className="flex items-start gap-2 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
+            <AlertCircle size={14} className="shrink-0 mt-0.5" />
+            <span>
+              La IA no pudo leer esta boleta — completa los datos a mano.
+              Si se repite, revisa la consola del navegador: las líneas que empiezan
+              con <code className="font-mono">[OCR]</code> dicen qué modelo falló y por qué.
+            </span>
+          </div>
+        )}
+
         {/* Banner bono Banmédica */}
         {(() => {
           const bi = ocr?.extracted_metadata?.banmedica_bonification ?? 0

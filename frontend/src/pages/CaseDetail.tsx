@@ -17,6 +17,7 @@ import { DOC_TYPE_LABELS } from '@/lib/types'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import clsx from 'clsx'
+import ImageCropModal from '@/components/ui/ImageCropModal'
 
 // ── tipos de documento que se pueden subir en el caso ──────────────────
 const DOC_SLOTS: { type: DocumentType; label: string; hint: string; multi?: boolean }[] = [
@@ -1832,8 +1833,18 @@ function DocZone({ slot, existing, uploading, multi, onFile, onDownload, onDelet
       </div>
     )}
 
-    {/* ── Modal preview ── */}
-    {previewFile && (
+    {/* ── Editor de recorte (fotos) ── */}
+    {previewFile && !isPdf && (
+      <ImageCropModal
+        file={previewFile}
+        title={`${slot.label} — ${previewFile.name}`}
+        onCancel={cancelPreview}
+        onConfirm={(f) => { onFile(f); cancelPreview() }}
+      />
+    )}
+
+    {/* ── Modal preview (PDF) ── */}
+    {previewFile && isPdf && (
       <div className="fixed inset-0 z-50 flex flex-col bg-black/80" onClick={cancelPreview}>
         <div className="flex items-center justify-between px-4 py-3 bg-gray-900 shrink-0"
              onClick={e => e.stopPropagation()}>
