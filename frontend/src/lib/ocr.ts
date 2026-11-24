@@ -568,17 +568,74 @@ function parseVisionJSON(raw: string): OCRResult | null {
   }
 }
 
-// OpenRouter — modelos de visión gratuitos.
-// IMPORTANTE: OpenRouter retira y renombra sus modelos ":free" con frecuencia.
-// Verificado contra https://openrouter.ai/api/v1/models el 26-08-2026 — estos 3
-// son los únicos modelos gratuitos con soporte de imagen disponibles ese día.
-// Si el OCR de fotos vuelve a fallar en el futuro, primero revisar esa lista
-// (buscar "modality":"text+image->text" o similar) y actualizar aquí.
+// ─────────────────────────────────────────────
+// Descubrimiento de modelos
+// ─────────────────────────────────────────────
+// Los proveedores retiran y renombran sus modelos cada pocos meses, y una lista
+// fija escrita a mano ya dejó el OCR fuera de servicio dos veces. En vez de eso,
+// le preguntamos al proveedor qué modelos tiene disponibles hoy y elegimos los
+// que sirven. Las listas fijas de más abajo quedan sólo como red de emergencia
+// por si el catálogo no responde.
+
+const MODEL_CACHE_TTL_MS = 6 * 60 * 60 * 1000
+
+function readModelCache(key: string): string[] | null {
+  try {
+    const raw = sessionStorage.getItem(key)
+    if (!raw) return null
+    const { at, models } = JSON.parse(raw)
+    if (!Array.isArray(models) || models.length === 0) return null
+    if (Date.now() - at > MODEL_CACHE_TTL_MS) return null
+    return models
+  } catch { return null }
+}
+
+function writeModelCache(key: string, models: string[]) {
+  try { sessionStorage.setItem(key, JSON.stringify({ at: Date.now(), models })) } catch { /* modo privado */ }
+}
+
+// Red de emergencia: gratuitos con visión al 24-11-2026 en openrouter.ai/api/v1/models
 export const OPENROUTER_MODELS = [
-  'thinkingmachines/inkling:free',
-  'thinkingmachines/inkling-small:free',
-  'dots-studio/dots-3-note-preview:free',
+  'nvidia/nemotron-3.5-super-vl:free',
+  'google/gemma-4-31b-it:free',
+  'google/gemma-4-26b-a4b-it:free',
 ]
+
+/**
+ * Puntaje para ordenar candidatos: primero los modelos declaradamente de
+ * visión (VL), que leen documentos bastante mejor que un modelo de texto con
+ * entrada de imagen agregada; a igualdad, el de mayor contexto.
+ */
+function openRouterScore(m: any): number {
+  const id = String(m?.id ?? '').toLowerCase()
+  const isVision = /(-vl|vision|ocr|omni)/.test(id)
+  return (isVision ? 1e9 : 0) + (m?.context_length ?? 0)
+}
+
+/** Modelos gratuitos de OpenRouter que aceptan imágenes, hoy. */
+export async function listOpenRouterVisionModels(): Promise<string[]> {
+  const cached = readModelCache('vumi.openrouter.models')
+  if (cached) return cached
+  try {
+    const resp = await fetch('https://openrouter.ai/api/v1/models')
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    const data = await resp.json()
+    const models: string[] = (data?.data ?? [])
+      .filter((m: any) =>
+        typeof m?.id === 'string' &&
+        m.id.endsWith(':free') &&
+        ((m?.architecture?.input_modalities ?? []) as string[]).includes('image'))
+      .sort((a: any, b: any) => openRouterScore(b) - openRouterScore(a))
+      .map((m: any) => m.id as string)
+    if (models.length === 0) throw new Error('el catálogo no trae modelos de visión gratuitos')
+    console.log('[OCR] Modelos de visión gratuitos en OpenRouter:', models.join(', '))
+    writeModelCache('vumi.openrouter.models', models)
+    return models
+  } catch (e) {
+    console.warn('[OCR] No se pudo leer el catálogo de OpenRouter, uso la lista de respaldo:', e)
+    return OPENROUTER_MODELS
+  }
+}
 
 async function extractViaOpenRouter(buffer: ArrayBuffer, mimeType: string): Promise<OCRResult | null> {
   const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY
@@ -587,7 +644,9 @@ async function extractViaOpenRouter(buffer: ArrayBuffer, mimeType: string): Prom
   const dataUrl = await prepareImageDataUrl(buffer, mimeType)
   console.log(`[OCR] Imagen preparada: ${Math.round(dataUrl.length / 1024)}KB, tipo: ${mimeType}`)
 
-  for (const model of OPENROUTER_MODELS) {
+  const candidates = (await listOpenRouterVisionModels()).slice(0, 3)
+
+  for (const model of candidates) {
     try {
       console.log(`[OCR] Intentando modelo: ${model}`)
       const controller = new AbortController()
@@ -639,14 +698,45 @@ async function extractViaOpenRouter(buffer: ArrayBuffer, mimeType: string): Prom
   return null
 }
 
-// Gemini directo — intenta múltiples modelos con timeout
-export const GEMINI_MODELS = [
-  'gemini-2.5-flash',
-  'gemini-2.0-flash',
-  'gemini-2.0-flash-001',
-  'gemini-1.5-flash',
-  'gemini-1.5-flash-latest',
-]
+// Gemini directo — segunda opción cuando OpenRouter no responde.
+// Red de emergencia por si ListModels falla; el orden real lo decide el catálogo.
+export const GEMINI_MODELS = ['gemini-3.5-flash-lite', 'gemini-2.5-flash']
+
+/** Peso para ordenar: versión más alta primero (gemini-3.5-… antes que gemini-2.5-…). */
+function geminiVersionWeight(id: string): number {
+  const m = id.match(/gemini-(\d+)(?:\.(\d+))?/)
+  if (!m) return 0
+  return Number(m[1]) * 100 + Number(m[2] ?? 0)
+}
+
+/** Modelos que la API de Gemini declara disponibles para esta key, hoy. */
+export async function listGeminiModels(apiKey: string): Promise<string[]> {
+  const cached = readModelCache('vumi.gemini.models')
+  if (cached) return cached
+  try {
+    const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`)
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    const data = await resp.json()
+    const all: string[] = (data?.models ?? [])
+      .filter((m: any) => ((m?.supportedGenerationMethods ?? []) as string[]).includes('generateContent'))
+      .map((m: any) => String(m?.name ?? '').replace(/^models\//, ''))
+      .filter(Boolean)
+    // Preferimos los "flash" (rápidos y con cuota gratuita) y descartamos variantes
+    // que no sirven para leer un documento.
+    const usable = all.filter(id => !/(preview|exp|tts|audio|embedding|image-generation|live)/.test(id))
+    const flash  = usable.filter(id => /flash/.test(id))
+    const chosen = (flash.length ? flash : usable)
+      .sort((a, b) => geminiVersionWeight(b) - geminiVersionWeight(a))
+      .slice(0, 4)
+    if (chosen.length === 0) throw new Error('la key no declara modelos utilizables')
+    console.log('[OCR] Modelos Gemini disponibles para esta key:', chosen.join(', '))
+    writeModelCache('vumi.gemini.models', chosen)
+    return chosen
+  } catch (e) {
+    console.warn('[OCR] No se pudo leer el catálogo de Gemini, uso la lista de respaldo:', e)
+    return GEMINI_MODELS
+  }
+}
 
 async function extractViaGemini(buffer: ArrayBuffer, mimeType: string): Promise<OCRResult | null> {
   const geminiKey = import.meta.env.VITE_GEMINI_API_KEY
@@ -660,7 +750,9 @@ async function extractViaGemini(buffer: ArrayBuffer, mimeType: string): Promise<
     : arrayBufferToBase64(buffer)
   const sendMime = isPdf ? 'image/jpeg' : mimeType
 
-  for (const model of GEMINI_MODELS) {
+  const geminiCandidates = await listGeminiModels(geminiKey)
+
+  for (const model of geminiCandidates) {
     try {
       console.log(`[OCR] Intentando Gemini modelo: ${model}`)
       const controller = new AbortController()
@@ -705,14 +797,15 @@ async function extractViaGemini(buffer: ArrayBuffer, mimeType: string): Promise<
   return null
 }
 
-// Intenta OpenRouter; si no hay key, intenta Gemini directo como último recurso
+// Gemini primero: su nivel gratuito es estable y lee documentos bastante mejor
+// que los modelos gratuitos rotativos de OpenRouter, que además aparecen y
+// desaparecen del catálogo. OpenRouter queda como respaldo.
 async function extractViaVision(buffer: ArrayBuffer, mimeType: string): Promise<OCRResult | null> {
-  // OpenRouter: gratis, sin tarjeta de crédito
-  const openRouterResult = await extractViaOpenRouter(buffer, mimeType)
-  if (openRouterResult) return openRouterResult
+  const geminiResult = await extractViaGemini(buffer, mimeType)
+  if (geminiResult) return geminiResult
 
-  // Gemini directo con múltiples modelos y timeout
-  return extractViaGemini(buffer, mimeType)
+  console.warn('[OCR] Gemini no devolvió resultado — probando OpenRouter')
+  return extractViaOpenRouter(buffer, mimeType)
 }
 
 // ─────────────────────────────────────────────
