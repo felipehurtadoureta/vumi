@@ -738,6 +738,104 @@ export async function listGeminiModels(apiKey: string): Promise<string[]> {
   }
 }
 
+const GEMINI_WINNER_KEY = 'vumi.gemini.modeloQueFunciono'
+
+/**
+ * Ajuste de "thinking". Los Gemini 3.x razonan por defecto en nivel medium y
+ * eso hace que una lectura simple de boleta se demore más de 25 s. Para leer
+ * un documento no hace falta razonar: bajamos al mínimo que cada familia
+ * admite. 3.8 no acepta "minimal" (devuelve error), así que ahí usamos "low".
+ * La serie 2.5 no entiende thinkingLevel y usa thinkingBudget.
+ */
+function thinkingConfigFor(model: string): Record<string, unknown> | null {
+  if (/gemini-2\.5/.test(model)) return { thinkingBudget: 0 }
+  if (/gemini-3\.8/.test(model)) return { thinkingLevel: 'low' }
+  if (/gemini-[34]/.test(model))  return { thinkingLevel: 'minimal' }
+  return null
+}
+
+/** Una llamada a un modelo de Gemini. Devuelve el resultado o null. */
+async function callGemini(
+  model: string, apiKey: string, base64: string, sendMime: string,
+  { sinThinking = false } = {},
+): Promise<OCRResult | null> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 30_000)
+  const thinking = sinThinking ? null : thinkingConfigFor(model)
+  try {
+    console.log(`[OCR] Intentando Gemini modelo: ${model}`)
+    const resp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        signal: controller.signal,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [
+            { text: VISION_PROMPT },
+            { inline_data: { mime_type: sendMime, data: base64 } },
+          ]}],
+          generationConfig: {
+            temperature: 0,
+            ...(thinking ? { thinkingConfig: thinking } : {}),
+          },
+        }),
+      }
+    )
+    clearTimeout(timeout)
+
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '')
+      // Si el modelo rechaza el ajuste de thinking, reintentamos sin él una vez.
+      if (resp.status === 400 && thinking && /thinking/i.test(errText)) {
+        console.warn(`[OCR] Gemini ${model} no acepta el ajuste de thinking — reintento sin él`)
+        return await callGemini(model, apiKey, base64, sendMime, { sinThinking: true })
+      }
+      console.warn(`[OCR] Gemini ${model} HTTP ${resp.status}:`, errText.slice(0, 300))
+      return null
+    }
+
+    const data = await resp.json()
+    const raw: string = data.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
+    const result = parseVisionJSON(raw)
+    if (result) { console.log('[OCR] Gemini OK con modelo:', model); return result }
+    console.warn(`[OCR] Gemini ${model} JSON no parseable:`, raw.slice(0, 200))
+    return null
+  } catch (e: any) {
+    clearTimeout(timeout)
+    if (e?.name === 'AbortError') console.warn(`[OCR] Gemini ${model} timeout (30s)`)
+    else console.warn(`[OCR] Gemini ${model} error:`, e)
+    return null
+  }
+}
+
+/** Lanza varios modelos a la vez y se queda con el primero que responda bien. */
+async function carreraGemini(
+  models: string[], apiKey: string, base64: string, sendMime: string,
+): Promise<OCRResult | null> {
+  if (models.length === 0) return null
+  // Promise.any pediría lib ES2021 en tsconfig; esto hace lo mismo sin tocarlo.
+  return await new Promise<OCRResult | null>(resolve => {
+    let pendientes = models.length
+    let resuelto = false
+    for (const m of models) {
+      callGemini(m, apiKey, base64, sendMime)
+        .then(r => {
+          if (r && !resuelto) {
+            resuelto = true
+            try { localStorage.setItem(GEMINI_WINNER_KEY, m) } catch { /* modo privado */ }
+            resolve(r)
+          }
+        })
+        .catch(() => { /* ya se registra dentro de callGemini */ })
+        .then(() => {
+          pendientes -= 1
+          if (pendientes === 0 && !resuelto) resolve(null)
+        })
+    }
+  })
+}
+
 async function extractViaGemini(buffer: ArrayBuffer, mimeType: string): Promise<OCRResult | null> {
   const geminiKey = import.meta.env.VITE_GEMINI_API_KEY
   if (!geminiKey) { console.warn('[OCR] No VITE_GEMINI_API_KEY'); return null }
@@ -750,48 +848,22 @@ async function extractViaGemini(buffer: ArrayBuffer, mimeType: string): Promise<
     : arrayBufferToBase64(buffer)
   const sendMime = isPdf ? 'image/jpeg' : mimeType
 
-  const geminiCandidates = await listGeminiModels(geminiKey)
+  const candidatos = await listGeminiModels(geminiKey)
 
-  for (const model of geminiCandidates) {
-    try {
-      console.log(`[OCR] Intentando Gemini modelo: ${model}`)
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), 25_000)
-
-      const resp = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`,
-        {
-          method: 'POST',
-          signal: controller.signal,
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [
-              { text: VISION_PROMPT },
-              { inline_data: { mime_type: sendMime, data: base64 } },
-            ]}],
-            generationConfig: { temperature: 0 },
-          }),
-        }
-      )
-      clearTimeout(timeout)
-
-      if (!resp.ok) {
-        const errText = await resp.text().catch(() => '')
-        console.warn(`[OCR] Gemini ${model} HTTP ${resp.status}:`, errText.slice(0, 300))
-        continue
-      }
-
-      const data = await resp.json()
-      const raw: string = data.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
-      console.log(`[OCR] Gemini ${model} respuesta:`, raw.slice(0, 200))
-      const result = parseVisionJSON(raw)
-      if (result) { console.log('[OCR] Gemini OK con modelo:', model); return result }
-      console.warn('[OCR] Gemini JSON no parseable:', raw.slice(0, 200))
-    } catch (e: any) {
-      if (e?.name === 'AbortError') console.warn(`[OCR] Gemini ${model} timeout (25s)`)
-      else console.warn(`[OCR] Gemini ${model} error:`, e)
-    }
+  // Camino rápido: el modelo que funcionó la última vez, solo.
+  let ganador: string | null = null
+  try { ganador = localStorage.getItem(GEMINI_WINNER_KEY) } catch { ganador = null }
+  if (ganador && candidatos.includes(ganador)) {
+    const r = await callGemini(ganador, geminiKey, base64, sendMime)
+    if (r) return r
+    console.warn(`[OCR] ${ganador} falló esta vez — probando el resto en paralelo`)
   }
+
+  // En paralelo, no en fila: los modelos nuevos a veces tardan o devuelven 503,
+  // y encadenarlos agota el tiempo total antes de llegar a uno que responda.
+  const resto = candidatos.filter(m => m !== ganador).slice(0, 3)
+  const r = await carreraGemini(resto, geminiKey, base64, sendMime)
+  if (r) return r
 
   console.warn('[OCR] Todos los modelos Gemini fallaron')
   return null
