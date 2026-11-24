@@ -143,7 +143,7 @@ export default function NewCase() {
         extracted_receipt_number: null, extracted_patient_name: null,
         extracted_metadata: {}, insurance_hint: null, ai_confidence: 0, ocr_raw_text: '',
       }
-      const result = await withTimeout(analyzeFile(buf, f.type), 45_000, EMPTY)
+      const result = await withTimeout(analyzeFile(buf, f.type), 75_000, EMPTY)
       clearTimeout(skipTimerRef.current!)
       setShowSkip(false)
       setOcr(result.ai_confidence > 0 ? result : null)
