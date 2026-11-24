@@ -222,7 +222,10 @@ class GeminiQuotaError extends Error {}
 // Gemini directo — mismo modelo/patrón gratuito que usa el resto del proyecto.
 // Un solo modelo: reintentar con otro modelo de Gemini no ayuda si el error
 // es de cuota (comparten el mismo límite), y solo duplica las llamadas.
-const GEMINI_MODELS = ['gemini-2.0-flash']
+// gemini-2.0-flash fue retirado en junio de 2026 y dejó este módulo sin lectura.
+// gemini-2.5-flash sigue vigente y, cuando se retire, Google redirige las
+// llamadas al modelo que lo reemplace en vez de devolver error.
+const GEMINI_MODELS = ['gemini-2.5-flash']
 
 async function extractViaGemini(buffer: ArrayBuffer, mimeType: string): Promise<InformeOCRResult | null> {
   const geminiKey = import.meta.env.VITE_GEMINI_API_KEY
