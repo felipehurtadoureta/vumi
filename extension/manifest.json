@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Vumi Asistente",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Prepara en el portal de MetLife el reembolso de un caso de Vumi: llena los datos y sube los documentos. El envío lo hace siempre el usuario.",
   "background": {
     "service_worker": "background.js"

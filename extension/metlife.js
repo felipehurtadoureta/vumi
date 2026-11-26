@@ -161,15 +161,24 @@ function crearAsistente(doc, win, job, hooks) {
     return new win.File([bytes], f.name, { type: f.mime })
   }
 
-  function seccionDe(input) {
-    let el = input
-    while (el && el.parentElement) {
-      el = el.parentElement
-      if (el.querySelectorAll('input[type=file]').length > 1) break
-      const t = textoDe(el)
-      if (t) var ultimo = t
+  // Asocia cada casilla de carga con su título ("Boleta o Factura",
+  // "Bono o Reembolso", …): desde cada título se sube por el árbol hasta el
+  // primer contenedor que tenga exactamente una casilla.
+  function titulosDeCasillas() {
+    const mapa = new Map()
+    const titulos = [...doc.querySelectorAll('*')].filter((el) =>
+      el.children.length === 0 && visible(el) && el.textContent.trim().length < 40 &&
+      /boleta|factura|bono|reembolso|liquidaci|receta|orden|prescrip/.test(norm(el.textContent)))
+    for (const t of titulos) {
+      let el = t
+      for (let i = 0; i < 12 && el; i++) {
+        el = el.parentElement
+        const casillas = el ? el.querySelectorAll('input[type=file]') : []
+        if (casillas.length === 1) { if (!mapa.has(casillas[0])) mapa.set(casillas[0], norm(t.textContent)); break }
+        if (casillas.length > 1) break
+      }
     }
-    return norm((ultimo || '').split('\n')[0])
+    return mapa
   }
 
   function archivoParaSeccion(titulo) {
@@ -187,9 +196,10 @@ function crearAsistente(doc, win, job, hooks) {
   async function pasoDocumentos(datos) {
     aviso('info', 'Preparando reembolso', `Caso ${job.caseLabel}: subiendo documentos…`)
     const inputs = [...doc.querySelectorAll('input[type=file]')]
+    const titulos = titulosDeCasillas()
     const subidos = [], faltan = []
     for (const input of inputs) {
-      const titulo = seccionDe(input)
+      const titulo = titulos.get(input) || ''
       const elegido = archivoParaSeccion(titulo)
       if (!elegido) { faltan.push(titulo || 'sección sin nombre'); continue }
       const [rol, f] = elegido
@@ -242,12 +252,19 @@ function crearAsistente(doc, win, job, hooks) {
           botonPorTexto('Reembolsos')[0].click()
         } else if (p === 'polizas' && !intentos.polizas) {
           intentos.polizas = 1
-          let botones = botonPorTexto('Solicitar')
+          // "Solicitar" no es un botón: es un texto dentro de una tarjeta
+          // clicable. Se busca el elemento hoja con ese texto.
+          let botones = [...doc.querySelectorAll('*')].filter((el) =>
+            el.children.length === 0 && visible(el) && norm(el.textContent) === 'solicitar')
           if (botones.length > 1) {
             botones = botones.filter((b) => {
               let el = b
-              for (let i = 0; i < 6 && el; i++) el = el.parentElement
-              return el && norm(textoDe(el)).includes('complementario')
+              for (let i = 0; i < 10 && el; i++) {
+                el = el.parentElement
+                const t = norm(textoDe(el))
+                if (t.includes('poliza')) return t.includes('complementario')
+              }
+              return false
             })
           }
           if (botones.length !== 1) throw new Error('No pude identificar la póliza del seguro complementario.')
