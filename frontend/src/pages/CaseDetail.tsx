@@ -832,11 +832,14 @@ Felipe Hurtado`
     new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP', maximumFractionDigits: 0 }).format(n)
 
   // ── Preparar en MetLife ──────────────────────────────────────────────
-  // Documentos que pide el portal: boleta siempre; liquidación salvo que el
-  // bono ya la incluya o sea medicamento.
+  // Documentos que pide el portal: boleta siempre. Atención médica: además la
+  // liquidación, salvo que el bono ya la incluya. Medicamento: además la receta
+  // (se guarda como orden médica).
   const mlFaltaLiq = !isMedicamento && !isBono && !caseData.has_liquidacion_banmedica
+  const mlFaltaReceta = isMedicamento && !caseData.has_orden_medica
   const mlFaltante = !caseData.has_boleta ? 'Falta la boleta'
     : mlFaltaLiq ? 'Falta la liquidación Banmédica'
+    : mlFaltaReceta ? 'Falta la receta (orden médica)'
     : !patient ? 'Falta asignar el paciente'
     : null
 
@@ -935,10 +938,16 @@ Felipe Hurtado`
                 <label className="block text-xs text-gray-500 mb-1">Documentos que se subirán</label>
                 <ul className="text-gray-700 space-y-0.5">
                   <li>• Boleta: {(docsByType['boleta']?.document as any)?.original_name ?? '—'}</li>
-                  <li>• Bono o reembolso: {(docsByType['liquidacion_banmedica']?.document as any)?.original_name
-                    ?? (isBono ? 'el mismo bono (incluye la liquidación)' : '—')}</li>
-                  {docsByType['orden_medica'] && (
-                    <li>• Orden médica (si el portal la pide): {(docsByType['orden_medica']?.document as any)?.original_name}</li>
+                  {isMedicamento ? (
+                    <li>• Receta: {(docsByType['orden_medica']?.document as any)?.original_name ?? '—'}</li>
+                  ) : (
+                    <>
+                      <li>• Bono o reembolso: {(docsByType['liquidacion_banmedica']?.document as any)?.original_name
+                        ?? (isBono ? 'el mismo bono (incluye la liquidación)' : '—')}</li>
+                      {docsByType['orden_medica'] && (
+                        <li>• Orden médica (si el portal la pide): {(docsByType['orden_medica']?.document as any)?.original_name}</li>
+                      )}
+                    </>
                   )}
                 </ul>
               </div>
