@@ -26,6 +26,8 @@ export default function ImageCropModal({ file, onConfirm, onCancel, title }: Pro
   const [dragIdx,   setDragIdx]   = useState<number | null>(null)
 
   const boxRef = useRef<HTMLDivElement>(null)
+  const areaRef = useRef<HTMLDivElement>(null)
+  const [area, setArea] = useState<{ w: number; h: number }>({ w: 0, h: 0 })
   const urlRef = useRef<string>('')
 
   // ── carga + detección automática ──────────────────────────────────────────
@@ -53,6 +55,17 @@ export default function ImageCropModal({ file, onConfirm, onCancel, title }: Pro
       if (urlRef.current) URL.revokeObjectURL(urlRef.current)
     }
   }, [file])
+
+  // ── espacio disponible para el lienzo (la imagen debe caber completa) ─────
+  useEffect(() => {
+    const el = areaRef.current
+    if (!el) return
+    const measure = () => setArea({ w: el.clientWidth, h: el.clientHeight })
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [loading])
 
   // ── arrastre de esquinas ──────────────────────────────────────────────────
   const moveCorner = useCallback((idx: number, clientX: number, clientY: number) => {
@@ -103,10 +116,18 @@ export default function ImageCropModal({ file, onConfirm, onCancel, title }: Pro
   }
 
   const pct = (p: Pt) => ({ left: `${p.x * 100}%`, top: `${p.y * 100}%` })
+  // Tamaño en píxeles que respeta ancho y alto disponibles, sin deformar la foto.
+  const MAX_W = 768
+  const fit = img && area.w > 0 && area.h > 0
+    ? (() => {
+        const scale = Math.min(Math.min(area.w, MAX_W) / img.naturalWidth, area.h / img.naturalHeight)
+        return { width: Math.floor(img.naturalWidth * scale), height: Math.floor(img.naturalHeight * scale) }
+      })()
+    : null
   const polygon = quad.map(p => `${p.x * 100}% ${p.y * 100}%`).join(', ')
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-black/85">
+    <div className="fixed inset-0 z-50 flex flex-col bg-gray-950">
       {/* Barra superior */}
       <div className="flex items-center justify-between gap-3 px-4 py-3 bg-gray-900 shrink-0">
         <div className="min-w-0">
@@ -175,14 +196,15 @@ export default function ImageCropModal({ file, onConfirm, onCancel, title }: Pro
       </div>
 
       {/* Lienzo */}
-      <div className="flex-1 overflow-auto flex items-center justify-center p-4 sm:p-6">
+      <div className="flex-1 min-h-0 p-4 sm:p-6">
+       <div ref={areaRef} className="w-full h-full flex items-center justify-center">
         {loading && <Loader2 size={28} className="animate-spin text-gray-400" />}
 
         {!loading && img && (
           <div
             ref={boxRef}
-            className="relative select-none touch-none max-w-3xl w-full"
-            style={{ aspectRatio: `${img.naturalWidth} / ${img.naturalHeight}` }}
+            className="relative select-none touch-none shrink-0"
+            style={fit ?? { width: 0, height: 0 }}
           >
             <img
               src={img.src}
@@ -242,6 +264,7 @@ export default function ImageCropModal({ file, onConfirm, onCancel, title }: Pro
             </button>
           </div>
         )}
+       </div>
       </div>
     </div>
   )
