@@ -18,6 +18,10 @@ import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import clsx from 'clsx'
 import ImageCropModal from '@/components/ui/ImageCropModal'
+import {
+  METLIFE_TIPOS, EXTENSION_INFO_URL, extensionInstalada, prepararEnMetlife,
+  type MetlifeTipo, type ArchivoEncargo,
+} from '@/lib/metlifeAsistente'
 
 // ── tipos de documento que se pueden subir en el caso ──────────────────
 const DOC_SLOTS: { type: DocumentType; label: string; hint: string; multi?: boolean }[] = [
@@ -127,6 +131,13 @@ export default function CaseDetail() {
   const [banmedicaDate, setBanmedicaDate] = useState(todayLocal)
   const [metlifeDate, setMetlifeDate]     = useState(todayLocal)
   const [savingStep, setSavingStep] = useState<string | null>(null)
+  // Preparar en MetLife (extensión Vumi Asistente)
+  const [mlOpen,  setMlOpen]  = useState(false)
+  const [mlTipo,  setMlTipo]  = useState<MetlifeTipo>(METLIFE_TIPOS[0])
+  const [mlMonto, setMlMonto] = useState('')
+  const [mlBusy,  setMlBusy]  = useState(false)
+  const [mlError, setMlError] = useState('')
+  const [mlOk,    setMlOk]    = useState(false)
   const [sendingVumi, setSendingVumi] = useState(false)
   const [vumiConfirmOpen, setVumiConfirmOpen] = useState(false)
   const [vumiPendingData, setVumiPendingData] = useState<{ subject: string; body: string; correlativo: string } | null>(null)
@@ -820,8 +831,137 @@ Felipe Hurtado`
   const fmtCLP = (n: number) =>
     new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP', maximumFractionDigits: 0 }).format(n)
 
+  // ── Preparar en MetLife ──────────────────────────────────────────────
+  // Documentos que pide el portal: boleta siempre; liquidación salvo que el
+  // bono ya la incluya o sea medicamento.
+  const mlFaltaLiq = !isMedicamento && !isBono && !caseData.has_liquidacion_banmedica
+  const mlFaltante = !caseData.has_boleta ? 'Falta la boleta'
+    : mlFaltaLiq ? 'Falta la liquidación Banmédica'
+    : !patient ? 'Falta asignar el paciente'
+    : null
+
+  function abrirPrepararMetlife() {
+    setMlTipo(isMedicamento ? 'Medicamentos' : 'Consultas médicas, exámenes y procedimientos')
+    setMlMonto(caseData?.total_amount != null ? String(Math.round(caseData.total_amount)) : '')
+    setMlError('')
+    setMlOk(false)
+    setMlOpen(true)
+  }
+
+  async function enlaceTemporal(cd: CaseDocument | undefined): Promise<ArchivoEncargo | undefined> {
+    const doc = cd?.document as any
+    if (!doc?.storage_path) return undefined
+    const { data, error } = await supabase.storage.from('documents').createSignedUrl(doc.storage_path, 600)
+    if (error || !data?.signedUrl) throw new Error('No se pudo generar el enlace de ' + (doc.original_name ?? 'un documento'))
+    return { url: data.signedUrl, name: doc.original_name ?? doc.filename ?? 'documento', mime: doc.mime_type ?? 'application/octet-stream' }
+  }
+
+  async function lanzarPrepararMetlife() {
+    if (!caseData) return
+    const monto = Number(mlMonto.replace(/\D/g, ''))
+    if (!monto) { setMlError('Ingresa el monto a reembolsar.'); return }
+    if (!extensionInstalada()) {
+      setMlError('No detecto la extensión "Vumi Asistente" en este navegador. Instálala y recarga Vumi.')
+      return
+    }
+    setMlBusy(true); setMlError('')
+    try {
+      const boleta = await enlaceTemporal(docsByType['boleta'])
+      if (!boleta) throw new Error('No encontré el archivo de la boleta.')
+      const liquidacion = await enlaceTemporal(docsByType['liquidacion_banmedica'])
+      const orden = await enlaceTemporal(docsByType['orden_medica'])
+      const fullName: string = patient?.full_name ?? ''
+      await prepararEnMetlife({
+        version: 1,
+        caseLabel: [caseData.correlativo, caseData.title].filter(Boolean).join(' · '),
+        tipo: mlTipo,
+        beneficiario: {
+          relationship: patient?.relationship ?? '',
+          firstName: fullName.trim().split(/\s+/)[0] ?? '',
+          fullName,
+        },
+        prevision: 'Banmédica',
+        monto,
+        bonoIncluyeLiquidacion: isBono,
+        files: { boleta, liquidacion, orden },
+      })
+      setMlOk(true)
+    } catch (e: any) {
+      setMlError(e?.message ?? 'No se pudo preparar el reembolso.')
+    } finally {
+      setMlBusy(false)
+    }
+  }
+
   return (
     <>
+    {/* ── Modal Preparar en MetLife ── */}
+    {mlOpen && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+            <h3 className="font-semibold text-gray-900">Preparar en MetLife</h3>
+            <button onClick={() => setMlOpen(false)} className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100">
+              <X size={16} />
+            </button>
+          </div>
+          {mlOk ? (
+            <div className="px-5 py-5 space-y-3 text-sm text-gray-700">
+              <p className="flex items-center gap-2 text-green-700 font-medium"><CheckCircle size={16} /> MetLife abierto en una pestaña nueva</p>
+              <p>La extensión completará los datos y subirá los documentos. Se detendrá antes de enviar: revisa y envía tú.</p>
+              <p>Cuando lo envíes, vuelve aquí y registra la fecha de envío.</p>
+              <div className="flex justify-end pt-1">
+                <button onClick={() => setMlOpen(false)} className="btn-primary text-sm py-1.5">Entendido</button>
+              </div>
+            </div>
+          ) : (
+            <div className="px-5 py-4 space-y-4 text-sm">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Beneficiario</label>
+                <p className="text-gray-800">{patient?.full_name ?? '—'} <span className="text-gray-400">({patient?.relationship ?? 'sin parentesco'})</span></p>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Tipo de reembolso en MetLife</label>
+                <select value={mlTipo} onChange={(e) => setMlTipo(e.target.value as MetlifeTipo)} className="input text-sm py-1.5 w-full">
+                  {METLIFE_TIPOS.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Monto a reembolsar (CLP)</label>
+                <input value={mlMonto} onChange={(e) => setMlMonto(e.target.value.replace(/\D/g, ''))}
+                  inputMode="numeric" className="input text-sm py-1.5 w-full" placeholder="Total de la boleta" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Documentos que se subirán</label>
+                <ul className="text-gray-700 space-y-0.5">
+                  <li>• Boleta: {(docsByType['boleta']?.document as any)?.original_name ?? '—'}</li>
+                  <li>• Bono o reembolso: {(docsByType['liquidacion_banmedica']?.document as any)?.original_name
+                    ?? (isBono ? 'el mismo bono (incluye la liquidación)' : '—')}</li>
+                  {docsByType['orden_medica'] && (
+                    <li>• Orden médica (si el portal la pide): {(docsByType['orden_medica']?.document as any)?.original_name}</li>
+                  )}
+                </ul>
+              </div>
+              {mlError && (
+                <p className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg">
+                  {mlError}{' '}
+                  {mlError.includes('extensión') && (
+                    <a href={EXTENSION_INFO_URL} target="_blank" rel="noreferrer" className="underline">Cómo instalarla</a>
+                  )}
+                </p>
+              )}
+              <div className="flex justify-end gap-2 pt-1">
+                <button onClick={() => setMlOpen(false)} className="btn-secondary text-sm py-1.5" disabled={mlBusy}>Cancelar</button>
+                <button onClick={lanzarPrepararMetlife} className="btn-primary text-sm py-1.5" disabled={mlBusy}>
+                  {mlBusy ? <><Loader2 size={14} className="animate-spin" /> Preparando…</> : <><Send size={14} /> Abrir MetLife y preparar</>}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    )}
+
     {/* ── Modal biblioteca de documentos ── */}
     {libraryPickerFor && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
@@ -1591,6 +1731,14 @@ Felipe Hurtado`
                 )}
               </div>
             )}
+            <div className="mt-1 mb-3">
+              <button onClick={abrirPrepararMetlife} disabled={!!mlFaltante}
+                className={step2Done ? 'btn-secondary text-sm py-1.5' : 'btn-primary text-sm py-1.5'}
+                title={mlFaltante ?? 'Abre el portal de MetLife y deja el reembolso listo para enviar'}>
+                <Send size={13} /> {step2Done ? 'Preparar de nuevo en MetLife' : 'Preparar en MetLife'}
+              </button>
+              {mlFaltante && <p className="text-xs text-gray-400 mt-1">{mlFaltante}</p>}
+            </div>
             {!step2Done && (
               <div className="mt-1">
                 <div className="flex gap-2">

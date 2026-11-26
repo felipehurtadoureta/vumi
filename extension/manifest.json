@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Vumi Asistente",
+  "version": "0.1.0",
+  "description": "Prepara en el portal de MetLife el reembolso de un caso de Vumi: llena los datos y sube los documentos. El envío lo hace siempre el usuario.",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": ["storage", "tabs"],
+  "host_permissions": [
+    "https://*.supabase.co/*",
+    "https://portaldeclientes.metlife.cl/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://vumi-omega.vercel.app/*",
+        "http://localhost:5173/*"
+      ],
+      "js": ["vumi-bridge.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://portaldeclientes.metlife.cl/*"],
+      "js": ["metlife.js"],
+      "all_frames": true,
+      "run_at": "document_idle"
+    }
+  ]
+}
